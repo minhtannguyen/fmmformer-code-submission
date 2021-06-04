@@ -1,8 +1,6 @@
 
 ## LRA Benchmark
 
-We released the source code for LRA benchmark.
-
 To prepare the datasets, one would need
 ```
 tensorboard>=2.3.0, tensorflow>=2.3.1, tensorflow-datasets>=4.0.1
@@ -19,8 +17,23 @@ To run the LRA tasks, one would need
 ```
 pytorch==1.7.1, transformers==3.3.1, performer-pytorch
 ```
-To run a LRA experiment, run the following command in `code` folder
+
+Run following commands to reproduce results in Table 1 in our paper.
+
+Listops
 ```
-python3 run_tasks.py --model <model> --task <task>
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "softmax" --task listops --use_wandb --project_name 'fmmformer' --job_name listops-softmax --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "linear" --task listops --use_wandb --project_name 'fmmformer' --job_name listops-linear --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task listops --diag_size 5 --sparse_ratio 6.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name listops-fmmformer-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task listops --diag_size 5 --sparse_ratio 11.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name listops-fmmformer-1-kernel-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task listops --diag_size 5 --sparse_ratio 13.5 --kernels 'elu' 'elu_flip' --use_wandb --project_name 'fmmformer' --job_name listops-fmmformer-2-kernel-band-5 --seed 0
 ```
-where `<model>` can be set to `softmax, nystrom-64, reformer-2, performer-256` corresponding to standard self-attention, Nystromformer with 64 landmarks, Reformer with 2 LSHs, Performer with 256 random projection dimension. And `<task>` can be set to `listops, text, retrieval, image, pathfinder32-curv_contour_length_14`. The best models and log files will be saved `LRA/logs/` folder.
+
+Text
+```
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "softmax" --task text --use_wandb --project_name 'fmmformer' --job_name text-softmax --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "linear" --task text --use_wandb --project_name 'fmmformer' --job_name text-linear --seed 0 
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task text --diag_size 5 --sparse_ratio 6.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name text-fmmformer-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task text --diag_size 5 --sparse_ratio 4.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name text-fmmformer-1-kernel-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task text --diag_size 5 --sparse_ratio 4.5 --kernels 'elu' 'elu_flip' --use_wandb --project_name 'fmmformer' --job_name text-fmmformer-2-kernel-band-5 --seed 0
+```
