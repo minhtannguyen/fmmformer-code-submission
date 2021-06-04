@@ -37,3 +37,12 @@ CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task tex
 CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task text --diag_size 5 --sparse_ratio 4.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name text-fmmformer-1-kernel-band-5 --seed 0
 CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task text --diag_size 5 --sparse_ratio 4.5 --kernels 'elu' 'elu_flip' --use_wandb --project_name 'fmmformer' --job_name text-fmmformer-2-kernel-band-5 --seed 0
 ```
+
+Retrieval
+```
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "softmax" --task retrieval --use_wandb --project_name 'fmmformer' --job_name retrieval-softmax --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "linear" --task retrieval --use_wandb --project_name 'fmmformer' --job_name retrieval-linear --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task retrieval --diag_size 5 --sparse_ratio 6.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name retrieval-fmmformer-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task retrieval --diag_size 5 --sparse_ratio 18.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name retrieval-fmmformer-1-kernel-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task retrieval --diag_size 5 --sparse_ratio 19.5 --kernels 'elu' 'elu_flip' --use_wandb --project_name 'fmmformer' --job_name retrieval-fmmformer-2-kernel-band-5 --seed 0
+```
