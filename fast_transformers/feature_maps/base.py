@@ -68,10 +68,6 @@ tanh_feature_map = ActivationFunctionFeatureMap.factory(
     lambda x: torch.tanh(x) + 1
 )
 
-rtanh_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: 1 - torch.tanh(x)
-)
-
 elu_feature_map = ActivationFunctionFeatureMap.factory(
     lambda x: torch.nn.functional.elu(x) + 1
 )
@@ -79,44 +75,3 @@ elu_feature_map = ActivationFunctionFeatureMap.factory(
 elu2_feature_map = ActivationFunctionFeatureMap.factory(
     lambda x: torch.nn.functional.elu(-x) + 1
 )
-
-bao_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.where(x>=1, x+1, torch.where(x<=-1, torch.exp(x)+2-math.exp(-1), 2*torch.square(x)))
-)
-
-orthog_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.where(x>=1, torch.exp(-x)+2-math.exp(-1), torch.where(x<=-1, x-1, 2*x))
-)
-
-r_elu_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.where(x>0, (torch.square(x) * torch.exp(-x)), (torch.square(x) * (x-1)))
-)
-
-relu_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.nn.functional.relu(x)
-)
-
-relu2_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.nn.functional.relu(-x)
-)
-
-gelu_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.nn.functional.gelu(x) + 0.16998
-)
-
-celu_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.nn.functional.celu(x) + 1
-)
-
-sigmoid_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.sigmoid(x)
-)
-
-leakyrelu_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.nn.functional.leaky_relu(x) + 1
-)
-
-softplus_feature_map = ActivationFunctionFeatureMap.factory(
-    lambda x: torch.nn.functional.softplus(x)
-)
-
