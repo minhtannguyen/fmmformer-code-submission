@@ -55,3 +55,12 @@ CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task ima
 CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task image --diag_size 5 --sparse_ratio 4.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name image-fmmformer-1-kernel-band-5 --seed 0 
 CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task image --diag_size 5 --sparse_ratio 17.5 --kernels 'elu' 'elu_flip' --use_wandb --project_name 'fmmformer' --job_name image-fmmformer-2-kernel-band-5 --seed 0
 ```
+
+Pathfinder
+```
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "softmax" --task pathfinder32-curv_contour_length_14 --use_wandb --project_name 'fmmformer' --job_name pathfinder-softmax --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "linear" --task pathfinder32-curv_contour_length_14 --use_wandb --project_name 'fmmformer' --job_name pathfinder-linear --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task pathfinder32-curv_contour_length_14 --diag_size 5 --sparse_ratio 6.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name pathfinder-fmmformer-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task pathfinder32-curv_contour_length_14 --diag_size 5 --sparse_ratio 2.5 --kernels 'elu' --use_wandb --project_name 'fmmformer' --job_name pathfinder-fmmformer-1-kernel-band-5 --seed 0
+CUDA_VISIBLE_DEVICES=0,1 python3 run_tasks.py --model "sparselowrank" --task pathfinder32-curv_contour_length_14 --diag_size 5 --sparse_ratio 15.5 --kernels 'elu' 'elu_flip' --use_wandb --project_name 'fmmformer' --job_name pathfinder-fmmformer-2-kernel-band-5 --seed 0
+```
