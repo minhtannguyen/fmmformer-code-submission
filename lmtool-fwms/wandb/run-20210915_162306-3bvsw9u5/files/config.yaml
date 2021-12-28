@@ -1,0 +1,214 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    cli_version: 0.10.27
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    python_version: 3.6.10
+    t:
+      1:
+      - 1
+      2:
+      - 1
+      4: 3.6.10
+      5: 0.10.27
+      8:
+      - 5
+adaptive:
+  desc: null
+  value: true
+attn_type:
+  desc: null
+  value: 200
+batch_chunk:
+  desc: null
+  value: 1
+batch_size:
+  desc: null
+  value: 96
+carry_over_fast_weight:
+  desc: null
+  value: false
+clamp_len:
+  desc: null
+  value: -1
+clip:
+  desc: null
+  value: 0.25
+clip_nonemb:
+  desc: null
+  value: false
+cuda:
+  desc: null
+  value: true
+d_embed:
+  desc: null
+  value: -1
+d_head:
+  desc: null
+  value: 16
+d_inner:
+  desc: null
+  value: 2048
+d_model:
+  desc: null
+  value: 128
+data:
+  desc: null
+  value: /tanData/nlp_data/wikitext-103/
+dataset:
+  desc: null
+  value: wt103
+debug:
+  desc: null
+  value: false
+decay_rate:
+  desc: null
+  value: 0.5
+div_val:
+  desc: null
+  value: 1
+dpfp_n_roll:
+  desc: null
+  value: 2
+dropatt:
+  desc: null
+  value: 0.0
+dropout:
+  desc: null
+  value: 0.1
+emb_init:
+  desc: null
+  value: normal
+emb_init_range:
+  desc: null
+  value: 0.01
+eta_min:
+  desc: null
+  value: 0.0
+eval_batch_size:
+  desc: null
+  value: 10
+eval_interval:
+  desc: null
+  value: 3
+eval_tgt_len:
+  desc: null
+  value: 256
+ext_len:
+  desc: null
+  value: 0
+finetune_v2:
+  desc: null
+  value: false
+finetune_v3:
+  desc: null
+  value: false
+fp16:
+  desc: null
+  value: false
+gpu0_bsz:
+  desc: null
+  value: -1
+host:
+  desc: null
+  value: insideDocker
+init:
+  desc: null
+  value: normal
+init_range:
+  desc: null
+  value: 0.1
+init_std:
+  desc: null
+  value: 0.02
+log_interval:
+  desc: null
+  value: 200
+lr:
+  desc: null
+  value: 0.00025
+lr_min:
+  desc: null
+  value: 0.0
+max_eval_steps:
+  desc: null
+  value: -1
+max_step:
+  desc: null
+  value: 500000
+mem_len:
+  desc: null
+  value: 0
+mom:
+  desc: null
+  value: 0.0
+multi_gpu:
+  desc: null
+  value: true
+n_head:
+  desc: null
+  value: 8
+n_layer:
+  desc: null
+  value: 16
+no_pos:
+  desc: null
+  value: false
+not_tied:
+  desc: null
+  value: false
+optim:
+  desc: null
+  value: adam
+patience:
+  desc: null
+  value: 0
+performer_proj_dim:
+  desc: null
+  value: 16
+pre_lnorm:
+  desc: null
+  value: false
+proj_init_std:
+  desc: null
+  value: 0.01
+restart:
+  desc: null
+  value: false
+restart_dir:
+  desc: null
+  value: ''
+same_length:
+  desc: null
+  value: false
+sample_softmax:
+  desc: null
+  value: -1
+scheduler:
+  desc: null
+  value: cosine
+seed:
+  desc: null
+  value: 1111
+skip_attn_normalization:
+  desc: null
+  value: false
+static_loss_scale:
+  desc: null
+  value: 1
+tgt_len:
+  desc: null
+  value: 256
+varlen:
+  desc: null
+  value: false
+warmup_step:
+  desc: null
+  value: 2000
+work_dir:
+  desc: null
+  value: /tanData/mgattn/mgk-mulgauss-rbf-seed-1111

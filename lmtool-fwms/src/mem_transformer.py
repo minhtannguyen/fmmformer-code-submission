@@ -17,13 +17,17 @@ from utils.cuda_fast_weight_layer import CudaNormFastWeightLinearTransformerLaye
 from utils.cuda_fast_weight_layer import CudaNormFastWeightPerformerLayer
 from utils.cuda_fast_weight_layer import CudaFastWeightDPFPTransformerLayer
 from utils.cuda_fast_weight_layer import CudaNormFastWeightDPFPTransformerLayer
-from utils.cuda_fast_weight_layer import CudaFastWeightSumMomentumTransformerLayer
-from utils.cuda_fast_weight_layer import CudaFastWeightSumAdaptiveResMomentumTransformerLayer
-from utils.cuda_fast_weight_layer import CudaFastWeightSumMomentumResMomentumTransformerLayer
 
 from utils.fast_fast_weight import fast_weight_memory
 from utils.fast_transformers import fast_weight_sum
 from utils.performer_helper import prime, draw_orthogonal_random_matrix
+import time
+import math
+
+def get_zero_grad_hook(mask):
+    def hook(grad):
+        return grad * mask
+    return hook
 
 
 class PositionalEmbedding(nn.Module):
@@ -79,7 +83,853 @@ class PositionwiseFF(nn.Module):
             output = self.layer_norm(inp + core_out)
 
         return output
+    
+    
+# Hierarchical Dirichlet Process attention.
+class HDPAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, n_global_head, dropatt=0, 
+                 pre_lnorm=False):
+        super(HDPAttn, self).__init__()
 
+        self.n_head = n_head
+        self.n_global_head = n_global_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+
+        self.q_net = nn.Linear(d_model, self.n_global_head * d_head, bias=False)
+        self.k_net = nn.Linear(d_model, self.n_global_head * d_head, bias=False)
+        self.v_net = nn.Linear(d_model, self.n_head  * d_head, bias=False)
+        self.hdp_net = nn.Sequential(
+            nn.Linear(self.n_global_head, self.n_head, bias=True),
+            nn.ReLU(),
+            nn.Linear(self.n_head, self.n_head, bias=True)
+        )
+          
+        # self.nonlinop = nn.LeakyReLU()
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+
+    def forward(self, h, attn_mask=None, mems=None,
+                carry_over_fast_weight=False):
+        assert not carry_over_fast_weight, "Not supported."
+        # multihead attention
+        # [hlen x bsz x n_head x d_head]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h # c, h: 256 x 48 x 128
+
+        if self.pre_lnorm:
+            # layer normalization
+            c = self.layer_norm(c)
+        
+        head_q = self.q_net(h)
+        head_k = self.k_net(c)
+        head_v = self.v_net(c)
+
+        head_q = head_q.view(h.size(0), h.size(1), self.n_global_head, self.d_head)
+        head_k = head_k.view(c.size(0), c.size(1), self.n_global_head, self.d_head)
+        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+
+        # [qlen x klen x bsz x n_head]
+        attn_score = torch.einsum('ibnd,jbnd->ijbn', (head_q, head_k))
+        attn_score = self.hdp_net(attn_score)
+        attn_score.mul_(self.scale)
+        if attn_mask is not None and attn_mask.any().item():
+            if attn_mask.dim() == 2:
+                attn_score.masked_fill_(
+                    attn_mask[None,:,:,None], -float('inf'))
+            elif attn_mask.dim() == 3:
+                attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
+
+        # [qlen x klen x bsz x n_head]
+        attn_prob = F.softmax(attn_score, dim=1)
+        
+        attn_prob = self.dropatt(attn_prob)
+
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
+        # -> [qlen x bsz x n_head x d_head]
+        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        # linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            # residual connection
+            output = h + attn_out
+        else:
+            # residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+
+        return output
+    
+    
+# Patch-based multihead attention.
+class PatchAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, kernel_size, stride, dropatt=0, 
+                 pre_lnorm=False):
+        super(PatchAttn, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+        
+        self.kernel_size = kernel_size
+        self.stride = stride
+            
+    def forward(self, h, attn_mask=None, mems=None,
+                carry_over_fast_weight=False):
+        assert not carry_over_fast_weight, "Not supported."
+        # multihead attention
+        # [hlen x bsz x n_head x d_head]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h
+
+        if self.pre_lnorm:
+            # layer normalization
+            c = self.layer_norm(c)
+        
+        head_q = self.q_net(h) # shape: [256, 48, 128] = [hlen, bsz, d_feature]
+        head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
+        
+        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
+        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        
+        head_q = head_q.transpose(0,2) # n_head x bsz x qlen x d_feature
+        head_k = head_k.transpose(0,2) # n_head x bsz x klen x d_feature
+        
+        head_q = head_q.unfold(2, self.kernel_size[0], self.stride[0]).unfold(3, self.kernel_size[1], self.stride[1])
+        head_k = head_k.unfold(2, self.kernel_size[0], self.stride[0]).unfold(3, self.kernel_size[1], self.stride[1])
+        
+        head_q = head_q.reshape(self.n_head, h.size(1), -1, self.kernel_size[0] * self.kernel_size[1])
+        head_k = head_k.reshape(self.n_head, c.size(1), -1, self.kernel_size[0] * self.kernel_size[1])
+        
+        import pdb; pdb.set_trace()
+        
+        QK_distance0 = (-self.scale/2.0)*torch.square(torch.cdist(head_q, head_k)) # n_head x bsz x qlen x klen
+        QK_distance0 = QK_distance0.permute(2, 3, 1, 0) # qlen x klen x bsz x n_head
+        
+        if attn_mask is not None and attn_mask.any().item():
+            if attn_mask.dim() == 2:
+                QK_distance0.masked_fill_(
+                    attn_mask[None,:,:,None], -float('inf'))
+            elif attn_mask.dim() == 3:
+                QK_distance0.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
+
+        # [qlen x klen x bsz x n_head]
+        attn_prob = F.softmax(QK_distance0, dim=1)
+                       
+        attn_prob = self.dropatt(attn_prob)
+
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
+        # -> [qlen x bsz x n_head x d_head]
+        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        # linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            # residual connection
+            output = h + attn_out
+        else:
+            # residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+        
+        return output
+    
+
+# Fourier multihead attention.
+class FourierAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, 
+                 pre_lnorm=False):
+        super(FourierAttn, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+        
+        self.paramR = nn.Parameter((d_head ** 0.5) * torch.ones(1), requires_grad= True) # 1 
+
+    def forward(self, h, attn_mask=None, mems=None,
+                carry_over_fast_weight=False):
+        assert not carry_over_fast_weight, "Not supported."
+        # multihead attention
+        # [hlen x bsz x n_head x d_head]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h
+
+        if self.pre_lnorm:
+            # layer normalization
+            c = self.layer_norm(c)
+
+        head_q = self.q_net(h) # shape: [256, 48, 128] = [hlen, bsz, d_feature]
+        head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
+
+        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head) # [hlen, bsz, n_head, d_head]
+        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        
+        ########################################
+        head_q = head_q.transpose(0,2)
+        head_k = head_k.transpose(0,2)
+        
+        QK_distance0 = (head_q.unsqueeze(3) - head_k.unsqueeze(2)) * self.paramR / math.pi # [n_head, bsz, qlen, klen, d_head]
+        QK_distance0 = torch.sinc(QK_distance0) * self.paramR
+        attn_prob = torch.prod(QK_distance0, dim=4)  # [n_head, bsz, qlen, klen]
+        
+#         attn_prob = torch.prod(self.paramR * torch.where(torch.ne(head_q.unsqueeze(3) - head_k.unsqueeze(2), 0.0), torch.sin((head_q.unsqueeze(3) - head_k.unsqueeze(2)) * self.paramR)/((head_q.unsqueeze(3) - head_k.unsqueeze(2)) * self.paramR), torch.tensor(1.0).to(head_q)), dim=4)
+        
+#         attn_prob = torch.prod(torch.sin((head_q.unsqueeze(3) - head_k.unsqueeze(2) + 1e-6) * self.paramR)/(head_q.unsqueeze(3) - head_k.unsqueeze(2) + 1e-6), dim=4)
+#         attn_prob = torch.prod(torch.sin((head_q.unsqueeze(3) - head_k.unsqueeze(2) + 1e-6) * self.paramR), dim=4)/torch.prod((head_q.unsqueeze(3) - head_k.unsqueeze(2) + 1e-6), dim=4)
+
+        attn_prob = attn_prob.permute(2, 3, 1, 0) # qlen x klen x bsz x n_head
+        # import pdb; pdb.set_trace()
+            
+        if attn_mask is not None and attn_mask.any().item():
+            if attn_mask.dim() == 2:
+                attn_prob.masked_fill_(
+                    attn_mask[None,:,:,None], 0.0)
+            elif attn_mask.dim() == 3:
+                attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+
+        # attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+        attn_prob = attn_prob / ((torch.sum(attn_prob, dim=1))[:, None, :, :] + 1e-6)
+        
+        attn_prob = self.dropatt(attn_prob)
+        
+        ########################################
+        
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
+        # -> [qlen x bsz x n_head x d_head]
+        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        # linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            # residual connection
+            output = h + attn_out
+        else:
+            # residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+
+        return output
+    
+# Standard multihead attention.
+class GMMAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, 
+                 pre_lnorm=False, update_mode='soft'):
+        super(GMMAttn, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+        self.update_mode = update_mode
+
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+        
+        if self.update_mode == 'soft':
+            scale_init = 1.0 / torch.arange(1, 257)
+            pi_init = torch.tril(torch.ones(256, 256) * scale_init[:, None])
+            self.register_buffer("pi", pi_init[:, :, None, None] * torch.ones(256, 256, 1, self.n_head, requires_grad= False)) # qlen x klen x 1 x n_head
+            self.beta_coef = 0.999          
+        elif self.update_mode == 'soft_klen':
+            self.scale_pi = 1.0 * torch.arange(1, 257)
+            # self.scale_pi = torch.tril(torch.ones(256, 256) * self.scale_pi[:, None])
+            self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+            self.beta_coef = 0.99
+        elif self.update_mode == 'soft_klen_full':
+            self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+            self.beta_coef = 0.9999
+        elif self.update_mode == 'soft_klen_full_learn':
+            self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+            self.scale_pi = nn.Parameter(torch.ones(1, 256, 1, self.n_head), requires_grad= True) # 1 x klen x 1 x n_head
+            self.beta_coef = 0.99
+        elif self.update_mode == 'soft_klen_scale_learn':
+            self.scale_pi = 1.0 * torch.arange(1, 257)
+            self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+            self.scale_pi_learn = nn.Parameter(torch.ones(1, 256, 1, self.n_head), requires_grad= True) # 1 x klen x 1 x n_head
+            self.beta_coef = 0.99
+        elif self.update_mode == 'soft_klen_learn':
+            self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+            self.scale_pi_learn = nn.Parameter(torch.ones(1, 256, 1, self.n_head), requires_grad= True) # 1 x klen x 1 x n_head
+            self.beta_coef = 0.99
+        elif self.update_mode == 'learn':
+            scale_init = 1.0 / torch.arange(1, 257)
+            pi_init = torch.tril(torch.ones(256, 256) * scale_init[:, None])
+            self.pi = nn.Parameter(pi_init[:, :, None, None] * torch.ones(256, 256, 1, self.n_head), requires_grad= True) # 1 x klen x 1 x n_head 
+        elif self.update_mode == 'learn_proj':
+            self.pi_net = nn.Linear(d_model, n_head, bias=False)
+            self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+            self.beta_coef = 0.99
+        elif self.update_mode == 'learn_proj_batch':
+            self.pi_net = nn.Linear(d_model, n_head, bias=False)
+            self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+            self.beta_coef = 0.99
+#         elif self.update_mode == 'learn_proj_scale':
+#             self.pi_net = nn.Linear(d_model, n_head, bias=False)
+#             self.scale_pi = 1.0 * torch.arange(1, 257)
+#             self.register_buffer("pi", (1.0/256.0) * torch.ones(1, 256, 1, self.n_head, requires_grad= False)) # 1 x klen x 1 x n_head
+#             self.beta_coef = 0.99
+            
+            
+    def forward(self, h, attn_mask=None, mems=None,
+                carry_over_fast_weight=False):
+        assert not carry_over_fast_weight, "Not supported."
+        # multihead attention
+        # [hlen x bsz x n_head x d_head]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h
+
+        if self.pre_lnorm:
+            # layer normalization
+            c = self.layer_norm(c)
+        
+        head_q = self.q_net(h) # shape: [256, 48, 128] = [hlen, bsz, d_feature]
+        head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
+        
+        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
+        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        
+        QK_distance0 = (-self.scale/2.0)*torch.square(torch.cdist(head_q.transpose(0,2), head_k.transpose(0,2))) # n_head x bsz x qlen x klen
+        QK_distance0 = QK_distance0.permute(2, 3, 1, 0) # qlen x klen x bsz x n_head
+        
+        if self.update_mode == 'soft':
+            pi = self.pi.clone().detach()
+            attn_prob = pi[:h.size(0),:c.size(0),:,:] * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = torch.sum(attn_prob, dim=(2,), keepdim=True)/h.size(1)
+                pi_new = torch.cat((pi_new, pi[:h.size(0),c.size(0):,:,:]), dim=1)
+                pi_new = torch.cat((pi_new, pi[h.size(0):,:,:,:]), dim=0)
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        elif self.update_mode == 'soft_klen':
+            pi = self.pi.clone().detach()
+            attn_prob = pi[:,:c.size(0),:,:] * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+            attn_prob_full = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                    attn_prob_full.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+                    attn_prob_full.masked_fill_(attn_mask[:,:,:,None], 0.0)
+
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = torch.sum(attn_prob_full, dim=(0,2), keepdim=True)/(h.size(1) * h.size(0)) # 1 x klen x 1 x n_head
+                pi_new = pi_new * self.scale_pi[None, :c.size(0), None, None].to(pi_new)
+                if c.size(0) < 256:
+                    sum_pi_new = 1.0 - pi[:,c.size(0):,:,:].sum(dim=1)[:, None, :, :] # 1 x 1 x 1 x n_head
+                    pi_new = sum_pi_new * pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                else:
+                    pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :]         
+                pi_new = torch.cat((pi_new, pi[:,c.size(0):,:,:]), dim=1)          
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        elif self.update_mode == 'soft_klen_full':
+            pi = self.pi.clone().detach()
+            attn_prob = pi[:,:c.size(0),:,:] * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+            attn_prob_full = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = torch.sum(attn_prob_full, dim=(0,2), keepdim=True)/(h.size(1) * h.size(0)) # 1 x klen x 1 x n_head
+                pi_new = torch.cat((pi_new, pi[:,c.size(0):,:,:]), dim=1)
+                pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        elif self.update_mode == 'soft_klen_full_learn':
+            pi = self.pi.clone().detach()
+            attn_prob = pi[:,:c.size(0),:,:] * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+            attn_prob_full = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = torch.sum(attn_prob_full, dim=(0,2), keepdim=True)/(h.size(1) * h.size(0)) # 1 x klen x 1 x n_head
+                pi_new = torch.cat((pi_new, pi[:,c.size(0):,:,:]), dim=1)
+                pi_new = self.scale_pi * pi_new
+                pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        elif self.update_mode == 'soft_klen_scale_learn':
+            pi = self.pi.clone().detach()
+            attn_prob = pi[:,:c.size(0),:,:] * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+            attn_prob_full = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                    attn_prob_full.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+                    attn_prob_full.masked_fill_(attn_mask[:,:,:,None], 0.0)
+
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = torch.sum(attn_prob_full, dim=(0,2), keepdim=True)/(h.size(1) * h.size(0)) # 1 x klen x 1 x n_head
+                pi_new = pi_new * self.scale_pi[None, :c.size(0), None, None].to(pi_new)
+                if c.size(0) < 256:
+                    sum_pi_new = 1.0 - pi[:,c.size(0):,:,:].sum(dim=1)[:, None, :, :] # 1 x 1 x 1 x n_head
+                    pi_new = sum_pi_new * pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                else:
+                    pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :] 
+                pi_new = torch.cat((pi_new, pi[:,c.size(0):,:,:]), dim=1)   
+                pi_new = self.scale_pi_learn * pi_new
+                pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        elif self.update_mode == 'soft_klen_learn':
+            pi = self.pi.clone().detach()
+            attn_prob = pi[:,:c.size(0),:,:] * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+            attn_prob_full = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                    attn_prob_full.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+                    attn_prob_full.masked_fill_(attn_mask[:,:,:,None], 0.0)
+
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = torch.sum(attn_prob_full, dim=(0,2), keepdim=True)/(h.size(1) * h.size(0)) # 1 x klen x 1 x n_head
+                if c.size(0) < 256:
+                    sum_pi_new = 1.0 - pi[:,c.size(0):,:,:].sum(dim=1)[:, None, :, :] # 1 x 1 x 1 x n_head
+                    pi_new = sum_pi_new * pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                else:
+                    pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :] 
+                pi_new = torch.cat((pi_new, pi[:,c.size(0):,:,:]), dim=1)   
+                pi_new = self.scale_pi_learn * pi_new
+                pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        elif self.update_mode == 'learn':
+            attn_prob = torch.clamp(self.pi[:h.size(0),:c.size(0),:,:], min=0.0, max=1.0) * torch.exp(QK_distance0)
+            
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(
+                        attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+                    
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+        elif self.update_mode == 'learn_proj':
+            pi = self.pi.clone().detach() # 1 x klen x 1 x n_head
+            attn_prob = pi[:,:c.size(0),:,:] * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+            
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+            
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = self.pi_net(c) # klen x bsz x n_head
+                pi_new = pi_new.view(c.size(0), c.size(1), self.n_head, 1) # klen x bsz x n_head x 1  
+                pi_new = pi_new.mean(dim=1, keepdim=True) # klen x 1 x n_head x 1  
+                pi_new = pi_new.permute(3, 0, 1, 2) # 1 x klen x 1 x n_head
+                pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        elif self.update_mode == 'learn_proj_batch':
+            pi = self.pi.clone().detach() # 1 x klen x 1 x n_head
+            pi_new = self.pi_net(c) # klen x bsz x n_head
+            pi_new = pi_new.view(c.size(0), c.size(1), self.n_head, 1) # klen x bsz x n_head x 1  
+            pi_new = pi_new.permute(3, 0, 1, 2) # 1 x klen x bsz x n_head
+            pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :] # 1 x klen x bsz x n_head
+            
+            attn_prob = pi_new * torch.exp(QK_distance0) # qlen x klen x bsz x n_head
+            
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+            
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            if self.training is True:
+                pi_new = pi_new.mean(dim=2, keepdim=True) # 1 x klen x 1 x n_head
+                # pi_new = pi_new / pi_new.sum(dim=1)[:, None, :, :]
+                pi_new = self.beta_coef * pi + (1.0 - self.beta_coef) * pi_new
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+        else:
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    QK_distance0.masked_fill_(
+                        attn_mask[None,:,:,None], -float('inf'))
+                elif attn_mask.dim() == 3:
+                    QK_distance0.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
+
+            # [qlen x klen x bsz x n_head]
+            attn_prob = F.softmax(QK_distance0, dim=1)
+                       
+        attn_prob = self.dropatt(attn_prob)
+
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
+        # -> [qlen x bsz x n_head x d_head]
+        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        # linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            # residual connection
+            output = h + attn_out
+        else:
+            # residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+        
+        return output
+      
+# Standard multihead attention.
+class MFAAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, 
+                 pre_lnorm=False, update_mode='hard'):
+        super(MFAAttn, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+        self.update_mode = update_mode
+
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.k_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.v_net = nn.Linear(n_head * d_head, n_head * d_head, bias=False)
+            
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+        
+    def forward(self, h, attn_mask=None, mems=None,
+                carry_over_fast_weight=False):
+        assert not carry_over_fast_weight, "Not supported."
+        # multihead attention
+        # [hlen x bsz x n_head x d_head]
+        # Shape of c and h is [256, 48, 128] = [hlen, bsz, d_feature]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h
+
+        if self.pre_lnorm:
+            # layer normalization
+            c = self.layer_norm(c)
+        
+        head_q = self.q_net(h) # shape: [256, 48, 128] = [hlen, bsz, d_feature]
+        head_k = self.k_net(c)
+        # head_v = self.scale * self.v_net(head_q - head_k)
+
+        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
+        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        # head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        
+        
+        # [qlen x klen x bsz x n_head]
+        attn_score = torch.einsum('ibnd,jbnd->ijbn', (head_q, head_k))
+        attn_score.mul_(self.scale)
+        
+#         # QK_distance0 = (-self.scale/2.0)*torch.square(torch.cdist(torch.transpose(head_q, 0 ,2), torch.transpose(head_k, 0 ,2))) 
+#         attn_score = (-self.scale/2.0)*torch.square(torch.cdist(head_q.transpose(0,2), head_k.transpose(0,2))) 
+#         attn_score = attn_score.permute(2, 3, 1, 0)
+        
+        if attn_mask is not None and attn_mask.any().item():
+            if attn_mask.dim() == 2:
+                attn_score.masked_fill_(
+                    attn_mask[None,:,:,None], -float('inf'))
+            elif attn_mask.dim() == 3:
+                attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
+
+        # [qlen x klen x bsz x n_head]
+        attn_prob = F.softmax(attn_score, dim=1)
+        attn_prob = self.dropatt(attn_prob)
+
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
+        # -> [qlen x bsz x n_head x d_head]
+        k_scaled = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_k))
+        attn_vec = head_q - k_scaled.contiguous()
+        attn_vec = attn_vec.view(attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+        attn_vec = self.scale * self.v_net(attn_vec)
+        # attn_vec = attn_vec.contiguous()
+
+        # linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            # residual connection
+            output = h + attn_out
+        else:
+            # residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+        
+        return output
+
+# Standard multihead attention.
+class MGKAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, 
+                 pre_lnorm=False, update_mode='hard'):
+        super(MGKAttn, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+        self.update_mode = update_mode
+
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        if self.update_mode == 'hard2keys' or self.update_mode == 'soft2keys' or self.update_mode == 'rbf2keys':
+            self.kv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
+        else:
+            self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
+            
+        # for mgk
+        if self.update_mode == 'hard' or self.update_mode == 'soft' or self.update_mode == 'rbf':
+            self.mu = nn.Parameter((torch.empty(2, n_head, d_head).normal_(mean = 0.0, std = .5))*torch.tensor([0.,1.])[:, None, None], requires_grad= True)
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+        
+        if self.update_mode == 'soft' or self.update_mode == 'soft2keys':
+            self.register_buffer("pi", 0.5 * torch.ones(self.n_head, 1, 1, 256, requires_grad= False))
+            # self.register_buffer("pi", 0.5 * torch.ones(self.n_head, 1, 1, 1, requires_grad= False))
+        
+        if self.update_mode == 'rbf' or self.update_mode == 'rbf2keys':
+            # self.pi0 = nn.Parameter(torch.rand(self.n_head, 1, 1, 256), requires_grad= True)
+            # self.pi1 = nn.Parameter(torch.rand(self.n_head, 1, 1, 256), requires_grad= True)
+            self.pi0 = nn.Parameter(0.5 * torch.ones(self.n_head, 1, 1, 256), requires_grad= True)
+            self.pi1 = nn.Parameter(0.5 * torch.ones(self.n_head, 1, 1, 256), requires_grad= True)
+        
+    def forward(self, h, attn_mask=None, mems=None,
+                carry_over_fast_weight=False):
+        assert not carry_over_fast_weight, "Not supported."
+        # multihead attention
+        # [hlen x bsz x n_head x d_head]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h
+
+        if self.pre_lnorm:
+            # layer normalization
+            c = self.layer_norm(c)
+        
+        head_q = self.q_net(h) # shape: [256, 48, 128] = [hlen, bsz, d_feature]
+        if self.update_mode == 'hard2keys' or self.update_mode == 'soft2keys' or self.update_mode == 'rbf2keys':
+            head_k, head_k1, head_v = torch.chunk(self.kv_net(c), 3, -1)
+        else:
+            head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
+        
+        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
+        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        
+        if self.update_mode == 'hard2keys' or self.update_mode == 'soft2keys' or self.update_mode == 'rbf2keys':
+            head_k1 = head_k1.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        
+        if self.update_mode == 'hard2keys' or self.update_mode == 'soft2keys' or self.update_mode == 'rbf2keys':
+            QK_distance0 = (-self.scale/2.0)*torch.square(torch.cdist(head_q.transpose(0,2), head_k.transpose(0,2))) 
+            QK_distance1 = (-1.5*self.scale)*torch.square(torch.cdist(head_q.transpose(0,2), head_k1.transpose(0,2))) 
+            # nu = 1.0
+            # QK_distance1 = (-nu*0.5 - 0.5) * torch.log(1 + self.scale*torch.square(torch.cdist(head_q.transpose(0,2), head_k1.transpose(0,2)))/nu)
+        else:
+            QK_distance0 = (-self.scale/2.0)*torch.square(torch.cdist(head_q.transpose(0,2), (head_k - self.mu[0]).transpose(0,2))) # n_head x bsz x qlen x klen
+            QK_distance1 = (-1.5*self.scale)*torch.square(torch.cdist(head_q.transpose(0,2), (head_k - self.mu[1]).transpose(0,2))) # n_head x bsz x qlen x klen
+        
+        if self.update_mode == 'hard' or self.update_mode == 'hard2keys':
+            attn_score = torch.maximum(QK_distance0, QK_distance1)
+            attn_score = attn_score.permute(2, 3, 1, 0)
+
+            # [qlen x klen x bsz x n_head]
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_score.masked_fill_(
+                        attn_mask[None,:,:,None], -float('inf'))
+                elif attn_mask.dim() == 3:
+                    attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
+
+            # [qlen x klen x bsz x n_head]
+            attn_prob = F.softmax(attn_score, dim=1)
+            
+        elif self.update_mode == 'soft' or self.update_mode == 'soft2keys':
+            pi = self.pi.clone().detach()
+            attn_prob = pi[:,:,:,:c.size(0)] * torch.exp(QK_distance0) + (1.0 - pi[:,:,:,:c.size(0)]) * torch.exp(QK_distance1)
+            # attn_prob = pi * torch.exp(QK_distance0) + (1.0 - pi) * torch.exp(QK_distance1)
+            if self.training is True:
+                resp0 = pi[:,:,:,:c.size(0)] * torch.exp(QK_distance0) / (attn_prob + 1e-6)
+                # resp0 = pi * torch.exp(QK_distance0) / (attn_prob + 1e-6)
+                pi_new = torch.sum(resp0, dim=(1,2), keepdim=True)/(h.size(0) * h.size(1))
+                pi_new = torch.cat((pi_new, pi[:,:,:,c.size(0):]), dim=3)
+                # pi_new = torch.sum(resp0, dim=(1,2,3), keepdim=True)/(h.size(0) * h.size(1) * c.size(0))
+                pi_new = pi_new.to(h)
+                self.pi.copy_(pi_new.detach())
+            
+            attn_prob = attn_prob.permute(2, 3, 1, 0)
+            
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(
+                        attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+            
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+            
+        else:
+            attn_prob = torch.clamp(self.pi0[:,:,:,:c.size(0)], min=0.0, max=1.0) * torch.exp(QK_distance0) + torch.clamp(self.pi1[:,:,:,:c.size(0)], min=0.0, max=1.0) * torch.exp(QK_distance1)
+            # attn_prob = self.pi0 * torch.exp(QK_distance0) + self.pi1 * torch.exp(QK_distance1)
+            attn_prob = attn_prob.permute(2, 3, 1, 0)
+            
+            if attn_mask is not None and attn_mask.any().item():
+                if attn_mask.dim() == 2:
+                    attn_prob.masked_fill_(
+                        attn_mask[None,:,:,None], 0.0)
+                elif attn_mask.dim() == 3:
+                    attn_prob.masked_fill_(attn_mask[:,:,:,None], 0.0)
+                    
+            attn_prob = attn_prob / ((attn_prob.sum(dim=1))[:, None, :, :] + 1e-6)
+        
+        attn_prob = self.dropatt(attn_prob)
+
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
+        # -> [qlen x bsz x n_head x d_head]
+        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        # linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            # residual connection
+            output = h + attn_out
+        else:
+            # residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+        
+        return output
 
 # Standard multihead attention.
 class MultiHeadAttn(nn.Module):
@@ -114,12 +964,12 @@ class MultiHeadAttn(nn.Module):
         if mems is not None:
             c = torch.cat([mems, h], 0)
         else:
-            c = h
+            c = h # c, h: 256 x 48 x 128
 
         if self.pre_lnorm:
             # layer normalization
             c = self.layer_norm(c)
-
+        
         head_q = self.q_net(h)
         head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
 
@@ -139,6 +989,7 @@ class MultiHeadAttn(nn.Module):
 
         # [qlen x klen x bsz x n_head]
         attn_prob = F.softmax(attn_score, dim=1)
+        
         attn_prob = self.dropatt(attn_prob)
 
         # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
@@ -159,750 +1010,6 @@ class MultiHeadAttn(nn.Module):
             output = self.layer_norm(h + attn_out)
 
         return output
-
-
-# Standard multihead attention.
-class MultiHeadAttnSparseLowrank(nn.Module):
-    def __init__(self, n_head, d_model, d_head, dropout, diag_size=0, sparse_ratio=0.5, kernels=[], dropatt=0, 
-                 pre_lnorm=False, eps=1e-5, layer_id=None, num_layer=None,
-                 skip_attn_normalization=False, proj_dim=256, device='cuda', n_roll=2):
-        super(MultiHeadAttnSparseLowrank, self).__init__()
-        print(f"Using MultiHeadAttnSparseLowrank {layer_id} -")
-        
-        assert layer_id is not None
-        assert num_layer is not None
-        self.layer_id = layer_id
-        self.num_layer = num_layer
-
-        self.n_head = n_head
-        self.d_model = d_model
-        self.d_head = d_head
-        self.dropout = dropout
-
-        # (3 * d_head * n_head) for qkv and (1 * n_head) for beta.
-        self.qkv_net = nn.Linear(d_model, n_head * 3 * d_head, bias=False)
-
-        self.drop = nn.Dropout(dropout)
-        self.dropatt = nn.Dropout(dropatt)
-        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
-
-        self.layer_norm = nn.LayerNorm(d_model)
-
-        self.scale = 1 / (d_head ** 0.5)
-
-        self.pre_lnorm = pre_lnorm
-        self.normalize_attn_scores = (not skip_attn_normalization)
-        self.eps = eps
-        
-        self.diag_size = diag_size
-        
-        if sparse_ratio < 1.0: # e.g. sparse_ratio = 0.5
-            self.type_blend = 0
-        elif sparse_ratio < 2.0: # e.g. sparse_ratio = 1.5
-            self.type_blend = 1
-        elif sparse_ratio < 3.0: # e.g. sparse_ratio = 2.5
-            self.type_blend = 2
-        elif sparse_ratio < 4.0:  # e.g. sparse_ratio = 3.5
-            self.type_blend = 3
-        elif sparse_ratio < 5.0: # e.g. sparse_ratio = 4.5
-            self.type_blend = 4 # sparse only
-        else:
-            self.type_blend = 5 # lowrank only
-                    
-        if self.type_blend == 0: # ws-al1-bl2
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.5]))
-        elif self.type_blend == 1: # s-w-al1-bl2
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.5]))
-        elif self.type_blend == 2: # sw-l1-l2
-            #self.sparse_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-        elif self.type_blend == 3: # ws-h-al1-bl2 
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.sparse_ratio2 = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.5]))
-        elif self.type_blend == 4:
-            self.sparse_ratio = 1.0
-        else:
-            self.sparse_ratio = 0.0
-        # self.sparse_ratio = sparse_ratio
-        self.kernels = kernels
-        self.rank_k = len(kernels)
-        
-        self.proj_dim = proj_dim
-        self.proj_matrix = draw_orthogonal_random_matrix(
-            d_head, proj_dim, device=device)  # TODO store this as param?
-        
-        self.n_roll = n_roll
-
-        
-    def forward(self, h, attn_mask=None, mems=None, redraw=True,
-                carry_over_fast_weight=False):
-        
-        if self.type_blend != 5:
-            attn_vec_sparse = self._forward_sparse(h, attn_mask, mems, carry_over_fast_weight)
-        
-        if self.type_blend != 4:
-            if carry_over_fast_weight:
-                attn_vec_lowrank, new_mem = self._forward_lowrank(h, attn_mask, mems, redraw, carry_over_fast_weight)
-            else:
-                attn_vec_lowrank = self._forward_lowrank(h, attn_mask, mems, redraw, carry_over_fast_weight)
-        
-        if self.type_blend == 0:
-            attn_vec = self.sparse_ratio * attn_vec_sparse + attn_vec_lowrank
-        elif self.type_blend == 1:
-            attn_vec = attn_vec_sparse + self.sparse_ratio * attn_vec_lowrank
-        elif self.type_blend == 2:
-            attn_vec =  self.sparse_ratio * attn_vec_sparse + attn_vec_lowrank
-        elif self.type_blend == 3:
-            attn_vec = self.sparse_ratio * attn_vec_sparse + self.sparse_ratio2 * attn_vec_lowrank
-        elif self.type_blend == 4:
-            attn_vec = attn_vec_sparse
-        else:
-            attn_vec = attn_vec_lowrank
-        
-        # linear projection
-        attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
-
-        if self.pre_lnorm:
-            # residual connection
-            output = h + attn_out
-        else:
-            # residual connection + layer normalization
-            output = self.layer_norm(h + attn_out)
-            
-        if carry_over_fast_weight and (self.type_blend != 4):
-            return output, new_mem
-        
-        return output
-    
-    def mul_roll_repeat(self, x):
-        rolls = []
-        for i in range(1, self.n_roll + 1):
-            rolls.append(x * x.roll(shifts=i, dims=-1))
-        return torch.cat(rolls, dim=-1)
-    
-    def _project_features(self, features, kernel_name, redraw=True):
-        if kernel_name == 'elu':
-            out = F.elu(features, 1., False) + 1.
-        elif kernel_name == 'tanh':
-            out = F.tanh(features) + 1.
-        elif kernel_name == 'relu':
-            out = F.relu(features, False)
-        elif kernel_name == 'celu':
-            out = F.celu(features, 1., False) + 1.
-        elif kernel_name == 'sigmoid':
-            out = F.sigmoid(features)
-        elif kernel_name == 'leaky_relu':
-            out = F.leaky_relu(features) + 1.
-        elif kernel_name == 'softplus':
-            out = F.softplus(features)
-        elif kernel_name == 'tanh_orthogonal':
-            out = 1. - F.tanh(features)
-        elif kernel_name == 'elu_flip':
-            out = F.elu(-features, 1., False) + 1.
-        elif kernel_name == 'selu':
-            out = F.selu(features) + 1.6732632423543772848170429916717 * 1.0507009873554804934193349852946
-        elif kernel_name == 'gelu':
-            out = F.gelu(features) + 0.16998
-        elif kernel_name == 'silu':
-            out = F.silu(features) + 1.28001
-        elif kernel_name == 'favor':
-            if redraw:
-                self.proj_matrix = draw_orthogonal_random_matrix(
-                    self.d_head, self.proj_dim, device=features.device)
-            
-            out = prime(features, self.proj_matrix)
-        elif kernel_name == 'dpfp':
-            act = lambda x: F.relu(x)
-            features = torch.cat([act(features), act(-features)], dim=-1)
-            out = self.mul_roll_repeat(features)
-        else:
-            out = features
-            
-        return out
-          
-    def _forward_lowrank(self, h, attn_mask=None, mems=None, redraw=True, carry_over_fast_weight=False):
-        # multihead attention
-        # shape h: (len, B, n_head * d_head)
-        
-        if self.pre_lnorm:
-            # layer normalization
-            h = self.layer_norm(h)
-
-        slen, bsz, _ = h.size()
-
-        qkv = self.qkv_net(h)
-        qkv = qkv.view(slen, bsz, self.n_head, 3 * self.d_head)
-        head_q, head_k, head_v = torch.split(
-            qkv, (self.d_head,) * 3, -1)
-
-        # reshape to (B, heads, len, dim)
-        head_q = head_q.permute(1, 2, 0, 3)
-        head_k = head_k.permute(1, 2, 0, 3)
-        head_v = head_v.permute(1, 2, 0, 3)
-
-        # TODO add dropout here?
-        # transform q and k
-        
-        head_q1 = self._project_features(head_q, kernel_name=self.kernels[0], redraw=redraw)
-        head_k1 = self._project_features(head_k, kernel_name=self.kernels[0], redraw=redraw)
-
-        # normalize k and q, crucial for stable training.
-        head_k1 = head_k1 / head_k1.sum(-1, keepdim=True)
-        head_q1 = head_q1 / head_q1.sum(-1, keepdim=True)
-
-        if self.normalize_attn_scores:
-            denominator_acc = torch.cumsum(head_k1, dim=2)
-
-        if mems is None:
-            mem_fast_weights = torch.zeros(
-                bsz, self.n_head, self.d_head, self.d_head,
-                device=head_k.device)
-        else:
-            assert carry_over_fast_weight
-            mem_fast_weights, fast_denom = mems
-            # bsz can be smaller for the last batch
-            mem_fast_weights = mem_fast_weights[:bsz]
-            if self.normalize_attn_scores:
-                denominator_acc = denominator_acc + fast_denom[:bsz]
-
-        if self.normalize_attn_scores:
-            denominator = torch.einsum(
-                'lbij,lbij->lbi', denominator_acc, head_q1).unsqueeze(-1)
-        
-        layer_out = fast_weight_sum(
-            head_q1, head_k1, head_v, mem_fast_weights)
-        
-        # shape (B, n_head, len, d_head)
-        if self.normalize_attn_scores:
-            layer_out = self.scale * layer_out / (denominator + self.eps)
-        else:
-            layer_out = self.scale * layer_out
-        
-        layer_out = layer_out.transpose(1, 2)
-
-        layer_out = layer_out.reshape(bsz, slen, self.n_head * self.d_head)
-
-        layer_out = layer_out.transpose(0, 1)
-        
-        if self.rank_k > 1:
-            # TODO add dropout here?
-            # transform q and k
-            
-            head_q2 = self._project_features(head_q, kernel_name=self.kernels[1])
-            head_k2 = self._project_features(head_k, kernel_name=self.kernels[1])
-
-            # normalize k and q, crucial for stable training.
-            head_k2 = head_k2 / head_k2.sum(-1, keepdim=True)
-            head_q2 = head_q2 / head_q2.sum(-1, keepdim=True)
-
-            if self.normalize_attn_scores:
-                denominator_acc2 = torch.cumsum(head_k2, dim=2)
-                
-                
-            if mems is None:
-                mem_fast_weights2 = torch.zeros(
-                    bsz, self.n_head, self.d_head, self.d_head,
-                    device=head_k2.device)
-            else:
-                assert carry_over_fast_weight
-                mem_fast_weights2, fast_denom2 = mems
-                # bsz can be smaller for the last batch
-                mem_fast_weights2 = mem_fast_weights2[:bsz]
-                if self.normalize_attn_scores:
-                    denominator_acc2 = denominator_acc2 + fast_denom2[:bsz]
-
-            if self.normalize_attn_scores:
-                denominator2 = torch.einsum(
-                    'lbij,lbij->lbi', denominator_acc2, head_q2).unsqueeze(-1)
-
-            layer_out2 = fast_weight_sum(
-                head_q2, head_k2, head_v, mem_fast_weights2)
-            
-            # shape (B, n_head, len, d_head)
-            if self.normalize_attn_scores:
-                layer_out2 = self.scale * layer_out2 / (denominator2 + self.eps)
-            else:
-                layer_out2 = self.scale * layer_out2
-
-            layer_out2 = layer_out2.transpose(1, 2)
-
-            layer_out2 = layer_out2.reshape(bsz, slen, self.n_head * self.d_head)
-
-            layer_out2 = layer_out2.transpose(0, 1)
-            
-            if self.type_blend == 0:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            elif self.type_blend == 1:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            elif self.type_blend == 2:
-                layer_out = 0.5 * layer_out + 0.5 * layer_out2
-            elif self.type_blend == 3:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            else:
-                layer_out = 0.5 * layer_out + 0.5 * layer_out2
-        
-        if carry_over_fast_weight:
-            # last values of accumulator should be carried over.
-            # clone is needed as backward modifies the data of fast weight
-            if self.normalize_attn_scores:
-                new_k_acc = denominator_acc[:, :, -1, :].unsqueeze(2).detach()
-                if self.rank_k > 1:
-                    new_k_acc2 = denominator_acc2[:, :, -1, :].unsqueeze(2).detach()
-                    new_k_acc = 0.5 * new_k_acc + 0.5 * new_k_acc2
-            else:
-                new_k_acc = None
-            if self.rank_k > 1:
-                new_mem = ((0.5 * mem_fast_weights + 0.5 * mem_fast_weights2).clone().detach(), new_k_acc)
-            else:
-                new_mem = (mem_fast_weights.clone().detach(), new_k_acc)     
-            return layer_out, new_mem
-        
-        return layer_out # expect [qlen, B, n_head * d_head]
-
-    def _forward_sparse(self, h, attn_mask=None, mems=None,
-                carry_over_fast_weight=False):
-        # assert not carry_over_fast_weight, "Not supported."
-        # multihead attention
-        # [hlen x bsz x n_head x d_head]
-
-        if mems is not None:
-            c = torch.cat([mems, h], 0)
-        else:
-            c = h
-
-        if self.pre_lnorm:
-            # layer normalization
-            c = self.layer_norm(c)
-        
-        slen, bsz, _ = c.size()
-        qkv = self.qkv_net(c)
-        qkv = qkv.view(slen, bsz, self.n_head, 3 * self.d_head)
-        head_q, head_k, head_v = torch.split(
-            qkv, (self.d_head,) * 3, -1)
-
-        # [qlen x klen x bsz x n_head]
-        attn_score = torch.einsum('ibnd,jbnd->ijbn', (head_q, head_k))
-        attn_score.mul_(self.scale)
-        if attn_mask is not None and attn_mask.any().item():
-            if attn_mask.dim() == 2:
-                attn_score.masked_fill_(
-                    attn_mask[None,:,:,None], -float('inf'))
-            elif attn_mask.dim() == 3:
-                attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
-
-        # [qlen x klen x bsz x n_head]
-        qlen, klen, bsz, n_head = attn_score.shape
-        
-        sparse_mask = torch.ones(qlen, klen).to(attn_score).to(torch.bool)
-        sparse_mask = torch.tril(sparse_mask, diagonal=-self.diag_size)
-        
-        attn_score.masked_fill_(sparse_mask[:, :, None, None], -float('inf'))
-        attn_prob = F.softmax(attn_score, dim=1)
-        
-        attn_prob = self.dropatt(attn_prob)
-
-        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
-        # -> [qlen x bsz x n_head x d_head]
-        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
-        attn_vec = attn_vec.contiguous().view(
-            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
-
-        return attn_vec
-
-
-# Standard multihead attention.
-class MultiHeadAttnSparseFastWeight(nn.Module):
-    def __init__(self, n_head, d_model, d_head, dropout, diag_size=0, sparse_ratio=0.5, kernels=[], dropatt=0, 
-                 pre_lnorm=False, eps=1e-5, layer_id=None, num_layer=None,
-                 skip_attn_normalization=False, proj_dim=256, device='cuda', n_roll=2):
-        super(MultiHeadAttnSparseFastWeight, self).__init__()
-        print(f"Using MultiHeadAttnSparseFastWeight {layer_id} -")
-        
-        assert layer_id is not None
-        assert num_layer is not None
-        self.layer_id = layer_id
-        self.num_layer = num_layer
-
-        self.n_head = n_head
-        self.d_model = d_model
-        self.d_head = d_head
-        self.dropout = dropout
-
-        # (3 * d_head * n_head) for qkv and (1 * n_head) for beta.
-        self.qkv_net = nn.Linear(d_model, n_head * 3 * d_head, bias=False)
-        self.beta_net = nn.Linear(d_model, n_head, bias=False)
-
-        self.drop = nn.Dropout(dropout)
-        self.dropatt = nn.Dropout(dropatt)
-        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
-
-        self.layer_norm = nn.LayerNorm(d_model)
-
-        self.scale = 1 / (d_head ** 0.5)
-
-        self.pre_lnorm = pre_lnorm
-        self.normalize_attn_scores = (not skip_attn_normalization)
-        self.eps = eps
-        
-        self.diag_size = diag_size
-        
-        if sparse_ratio < 1.0: # e.g. sparse_ratio = 0.5
-            self.type_blend = 0
-        elif sparse_ratio < 2.0: # e.g. sparse_ratio = 1.5
-            self.type_blend = 1
-        elif sparse_ratio < 3.0: # e.g. sparse_ratio = 2.5
-            self.type_blend = 2
-        elif sparse_ratio < 4.0:  # e.g. sparse_ratio = 3.5
-            self.type_blend = 3
-        elif sparse_ratio < 5.0: # e.g. sparse_ratio = 4.5
-            self.type_blend = 4 # sparse only
-        elif sparse_ratio < 6.0: # e.g. sparse_ratio = 5.5
-            self.type_blend = 5 # lowrank only
-        elif sparse_ratio < 7.0:  # e.g. sparse_ratio = 6.5
-            self.type_blend = 6
-        elif sparse_ratio < 8.0:  # e.g. sparse_ratio = 7.5
-            self.type_blend = 7
-        elif sparse_ratio < 9.0:  # e.g. sparse_ratio = 8.5
-            self.type_blend = 8
-        elif sparse_ratio < 10.0:  # e.g. sparse_ratio = 9.5
-            self.type_blend = 9
-                    
-        if self.type_blend == 0: # ws-al1-bl2
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.5]))
-        elif self.type_blend == 1: # s-w-al1-bl2
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.5]))
-        elif self.type_blend == 2: # sw-l1-l2
-            #self.sparse_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-        elif self.type_blend == 3: # ws-h-al1-bl2 
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.sparse_ratio2 = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([0.5]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.5]))
-        elif self.type_blend == 4:
-            self.sparse_ratio = 1.0
-        elif self.type_blend == 5:
-            self.sparse_ratio = 0.0
-        elif self.type_blend == 6:
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.sparse_ratio2 = nn.Parameter(torch.ones(1, 1, n_head * d_head))
-        elif self.type_blend == 7:
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.sparse_ratio2 = nn.Parameter(torch.ones(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([1.0]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.0]))
-        elif self.type_blend == 8:
-            self.sparse_ratio = nn.Parameter(torch.zeros(1, 1, n_head * d_head))
-            self.sparse_ratio2 = nn.Parameter(torch.ones(1, 1, n_head * d_head))
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([0.0]))
-        elif self.type_blend == 9:
-            self.lowrank_ratio = nn.Parameter(torch.Tensor([1.0]))
-            self.lowrank_ratio2 = nn.Parameter(torch.Tensor([0.0]))
-            
-        # self.sparse_ratio = sparse_ratio
-        self.kernels = kernels
-        self.rank_k = len(kernels)
-        
-        self.proj_dim = proj_dim
-        self.proj_matrix = draw_orthogonal_random_matrix(
-            d_head, proj_dim, device=device)  # TODO store this as param?
-        
-        self.n_roll = n_roll
-
-        
-    def forward(self, h, attn_mask=None, mems=None, redraw=True,
-                carry_over_fast_weight=False):
-        
-        if self.type_blend != 5 and self.type_blend != 9:
-            attn_vec_sparse = self._forward_sparse(h, attn_mask, mems, carry_over_fast_weight)
-        
-        if self.type_blend != 4:
-            if carry_over_fast_weight:
-                attn_vec_lowrank, new_mem = self._forward_lowrank(h, attn_mask, mems, redraw, carry_over_fast_weight)
-            else:
-                attn_vec_lowrank = self._forward_lowrank(h, attn_mask, mems, redraw, carry_over_fast_weight)
-        
-        if self.type_blend == 0:
-            attn_vec = self.sparse_ratio * attn_vec_sparse + attn_vec_lowrank
-        elif self.type_blend == 1:
-            attn_vec = attn_vec_sparse + self.sparse_ratio * attn_vec_lowrank
-        elif self.type_blend == 2:
-            attn_vec =  self.sparse_ratio * attn_vec_sparse + attn_vec_lowrank
-        elif self.type_blend == 3:
-            attn_vec = self.sparse_ratio * attn_vec_sparse + self.sparse_ratio2 * attn_vec_lowrank
-        elif self.type_blend == 4:
-            attn_vec = attn_vec_sparse
-        elif self.type_blend == 5:
-            attn_vec = attn_vec_lowrank
-        elif self.type_blend == 6:
-            attn_vec = self.sparse_ratio * attn_vec_sparse + self.sparse_ratio2 * attn_vec_lowrank
-        elif self.type_blend == 7:
-            attn_vec = self.sparse_ratio * attn_vec_sparse + self.sparse_ratio2 * attn_vec_lowrank
-        elif self.type_blend == 8:
-            attn_vec = self.sparse_ratio * attn_vec_sparse + self.sparse_ratio2 * attn_vec_lowrank
-        elif self.type_blend == 9:
-            attn_vec = attn_vec_lowrank
-        
-        # linear projection
-        attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
-
-        if self.pre_lnorm:
-            # residual connection
-            output = h + attn_out
-        else:
-            # residual connection + layer normalization
-            output = self.layer_norm(h + attn_out)
-            
-        if carry_over_fast_weight and (self.type_blend != 4):
-            return output, new_mem
-        
-        return output
-    
-    def mul_roll_repeat(self, x):
-        rolls = []
-        for i in range(1, self.n_roll + 1):
-            rolls.append(x * x.roll(shifts=i, dims=-1))
-        return torch.cat(rolls, dim=-1)
-    
-    def _project_features(self, features, kernel_name, redraw=True):
-        if kernel_name == 'elu':
-            out = F.elu(features, 1., False) + 1.
-        elif kernel_name == 'tanh':
-            out = F.tanh(features) + 1.
-        elif kernel_name == 'relu':
-            out = F.relu(features, False)
-        elif kernel_name == 'celu':
-            out = F.celu(features, 1., False) + 1.
-        elif kernel_name == 'sigmoid':
-            out = F.sigmoid(features)
-        elif kernel_name == 'leaky_relu':
-            out = F.leaky_relu(features) + 1.
-        elif kernel_name == 'softplus':
-            out = F.softplus(features)
-        elif kernel_name == 'tanh_orthogonal':
-            out = 1. - F.tanh(features)
-        elif kernel_name == 'elu_flip':
-            out = F.elu(-features, 1., False) + 1.
-        elif kernel_name == 'selu':
-            out = F.selu(features) + 1.6732632423543772848170429916717 * 1.0507009873554804934193349852946
-        elif kernel_name == 'gelu':
-            out = F.gelu(features) + 0.16998
-        elif kernel_name == 'silu':
-            out = F.silu(features) + 1.28001
-        elif kernel_name == 'favor':
-            if redraw:
-                self.proj_matrix = draw_orthogonal_random_matrix(
-                    self.d_head, self.proj_dim, device=features.device)
-            
-            out = prime(features, self.proj_matrix)
-        elif kernel_name == 'dpfp':
-            act = lambda x: F.relu(x)
-            features = torch.cat([act(features), act(-features)], dim=-1)
-            out = self.mul_roll_repeat(features)
-        else:
-            out = features
-            
-        return out
-          
-    def _forward_lowrank(self, h, attn_mask=None, mems=None, redraw=True, carry_over_fast_weight=False):
-        # multihead attention
-        # shape h: (len, B, n_head * d_head)
-        
-        if self.pre_lnorm:
-            # layer normalization
-            h = self.layer_norm(h)
-
-        slen, bsz, _ = h.size()
-
-        qkv = self.qkv_net(h)
-        beta = self.beta_net(h)
-        qkv = qkv.view(slen, bsz, self.n_head, 3 * self.d_head)
-        beta = beta.view(slen, bsz, self.n_head, 1)
-        
-        head_q, head_k, head_v = torch.split(
-            qkv, (self.d_head,) * 3, -1)
-        head_beta = torch.split(
-            beta, (1,), -1)[0]
-        head_beta = torch.sigmoid(head_beta)
-
-        # reshape to (B, heads, len, dim)
-        head_q = head_q.permute(1, 2, 0, 3)
-        head_k = head_k.permute(1, 2, 0, 3)
-        head_v = head_v.permute(1, 2, 0, 3)
-        head_beta = head_beta.permute(1, 2, 0, 3)
-
-        # TODO add dropout here?
-        # transform q and k
-        
-        head_q1 = self._project_features(head_q, kernel_name=self.kernels[0], redraw=redraw)
-        head_k1 = self._project_features(head_k, kernel_name=self.kernels[0], redraw=redraw)
-
-        # normalize k and q, crucial for stable training.
-        head_k1 = head_k1 / head_k1.sum(-1, keepdim=True)
-        head_q1 = head_q1 / head_q1.sum(-1, keepdim=True)
-
-        if self.normalize_attn_scores:
-            denominator_acc = torch.cumsum(head_k1, dim=2)
-
-        if mems is None:
-            mem_fast_weights = torch.zeros(
-                bsz, self.n_head, self.d_head, self.d_head,
-                device=head_k.device)
-        else:
-            assert carry_over_fast_weight
-            mem_fast_weights, fast_denom = mems
-            # bsz can be smaller for the last batch
-            mem_fast_weights = mem_fast_weights[:bsz]
-            if self.normalize_attn_scores:
-                denominator_acc = denominator_acc + fast_denom[:bsz]
-
-        if self.normalize_attn_scores:
-            denominator = torch.einsum(
-                'lbij,lbij->lbi', denominator_acc, head_q1).unsqueeze(-1)
-        
-        layer_out = fast_weight_memory(
-            head_q1, head_k1, head_v, head_beta, mem_fast_weights)
-        
-        # shape (B, n_head, len, d_head)
-        if self.normalize_attn_scores:
-            layer_out = self.scale * layer_out / (denominator + self.eps)
-        else:
-            layer_out = self.scale * layer_out
-        
-        layer_out = layer_out.transpose(1, 2)
-
-        layer_out = layer_out.reshape(bsz, slen, self.n_head * self.d_head)
-
-        layer_out = layer_out.transpose(0, 1)
-        
-        if self.rank_k > 1:
-            # TODO add dropout here?
-            # transform q and k
-            
-            head_q2 = self._project_features(head_q, kernel_name=self.kernels[1])
-            head_k2 = self._project_features(head_k, kernel_name=self.kernels[1])
-
-            # normalize k and q, crucial for stable training.
-            head_k2 = head_k2 / head_k2.sum(-1, keepdim=True)
-            head_q2 = head_q2 / head_q2.sum(-1, keepdim=True)
-
-            if self.normalize_attn_scores:
-                denominator_acc2 = torch.cumsum(head_k2, dim=2)
-                
-            mem_fast_weights2 = torch.zeros(
-                    bsz, self.n_head, self.d_head, self.d_head,
-                    device=head_k2.device)    
-            
-            if self.normalize_attn_scores:
-                denominator2 = torch.einsum(
-                    'lbij,lbij->lbi', denominator_acc2, head_q2).unsqueeze(-1)
-            
-            layer_out2 = fast_weight_sum(
-                head_q2, head_k2, head_v, mem_fast_weights2)
-            
-            # shape (B, n_head, len, d_head)
-            if self.normalize_attn_scores:
-                layer_out2 = self.scale * layer_out2 / (denominator2 + self.eps)
-            else:
-                layer_out2 = self.scale * layer_out2
-
-            layer_out2 = layer_out2.transpose(1, 2)
-
-            layer_out2 = layer_out2.reshape(bsz, slen, self.n_head * self.d_head)
-
-            layer_out2 = layer_out2.transpose(0, 1)
-            
-            if self.type_blend == 0:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            elif self.type_blend == 1:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            elif self.type_blend == 2:
-                layer_out = 0.5 * layer_out + 0.5 * layer_out2
-            elif self.type_blend == 3:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            elif self.type_blend == 7:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            elif self.type_blend == 8:
-                layer_out = layer_out + self.lowrank_ratio * layer_out2
-            elif self.type_blend == 9:
-                layer_out = self.lowrank_ratio * layer_out + self.lowrank_ratio2 * layer_out2
-            else:
-                layer_out = 0.5 * layer_out + 0.5 * layer_out2
-        
-        if carry_over_fast_weight:
-            # last values of accumulator should be carried over.
-            # clone is needed as backward modifies the data of fast weight
-            if self.normalize_attn_scores:
-                new_k_acc = denominator_acc[:, :, -1, :].unsqueeze(2).detach()
-            else:
-                new_k_acc = None
-            new_mem = (mem_fast_weights.clone().detach(), new_k_acc)     
-            return layer_out, new_mem
-        
-        return layer_out # expect [qlen, B, n_head * d_head]
-
-    def _forward_sparse(self, h, attn_mask=None, mems=None,
-                carry_over_fast_weight=False):
-        # assert not carry_over_fast_weight, "Not supported."
-        # multihead attention
-        # [hlen x bsz x n_head x d_head]
-
-        if mems is not None:
-            c = torch.cat([mems, h], 0)
-        else:
-            c = h
-
-        if self.pre_lnorm:
-            # layer normalization
-            c = self.layer_norm(c)
-        
-        slen, bsz, _ = c.size()
-        qkv = self.qkv_net(c)
-        qkv = qkv.view(slen, bsz, self.n_head, 3 * self.d_head)
-        head_q, head_k, head_v = torch.split(
-            qkv, (self.d_head,) * 3, -1)
-
-        # [qlen x klen x bsz x n_head]
-        attn_score = torch.einsum('ibnd,jbnd->ijbn', (head_q, head_k))
-        attn_score.mul_(self.scale)
-        if attn_mask is not None and attn_mask.any().item():
-            if attn_mask.dim() == 2:
-                attn_score.masked_fill_(
-                    attn_mask[None,:,:,None], -float('inf'))
-            elif attn_mask.dim() == 3:
-                attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
-
-        # [qlen x klen x bsz x n_head]
-        qlen, klen, bsz, n_head = attn_score.shape
-        
-        sparse_mask = torch.ones(qlen, klen).to(attn_score).to(torch.bool)
-        sparse_mask = torch.tril(sparse_mask, diagonal=-self.diag_size)
-        
-        attn_score.masked_fill_(sparse_mask[:, :, None, None], -float('inf'))
-        attn_prob = F.softmax(attn_score, dim=1)
-        
-        attn_prob = self.dropatt(attn_prob)
-
-        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head]
-        # -> [qlen x bsz x n_head x d_head]
-        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, head_v))
-        attn_vec = attn_vec.contiguous().view(
-            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
-
-        return attn_vec
-
 
 # Linear multihead attention from Katharopoulos et al.
 # Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention
@@ -1506,16 +1613,18 @@ class DecoderLayer(nn.Module):
             attn_func = CudaNormFastWeightDPFPTransformerLayer
         elif attn_type == 34:
             attn_func = CudaFastWeightSumLinearTransformerLayer
-        elif attn_type == 101:
-            attn_func = CudaFastWeightSumMomentumTransformerLayer
-        elif attn_type == 102:
-            attn_func = CudaFastWeightSumAdaptiveResMomentumTransformerLayer
-        elif attn_type == 103:
-            attn_func = CudaFastWeightSumMomentumResMomentumTransformerLayer
+        elif attn_type == 200:
+            attn_func = MGKAttn
         elif attn_type == 201:
-            attn_func = MultiHeadAttnSparseLowrank
+            attn_func = MFAAttn
         elif attn_type == 202:
-            attn_func = MultiHeadAttnSparseFastWeight
+            attn_func = GMMAttn
+        elif attn_type == 203:
+            attn_func = FourierAttn
+        elif attn_type == 204:
+            attn_func = PatchAttn
+        elif attn_type == 205:
+            attn_func = HDPAttn
         else:
             raise Exception(f"attn_type {attn_type} not allowed here.")
 
@@ -1528,39 +1637,15 @@ class DecoderLayer(nn.Module):
     def forward(self, *dec_inp, dec_attn_mask=None, mems=None, redraw=True,
                 carry_over_fast_weight=False):
         
-        if self.attn_type == 201 or self.attn_type == 202:
-            output = self.dec_attn(*dec_inp, attn_mask=dec_attn_mask, mems=mems, redraw=redraw, carry_over_fast_weight=carry_over_fast_weight)
-        else:
-            output = self.dec_attn(*dec_inp, attn_mask=dec_attn_mask, mems=mems, carry_over_fast_weight=carry_over_fast_weight)
+        output = self.dec_attn(*dec_inp, attn_mask=dec_attn_mask, mems=mems, carry_over_fast_weight=carry_over_fast_weight)
         
-        if self.attn_type in [102,]:
-            if carry_over_fast_weight:
-                output, vy, gradvaly, new_mem = output
-            else:
-                output, vy, gradvaly = output
-        elif self.attn_type in [103,]:
-            if carry_over_fast_weight:
-                output, vy, new_mem = output
-            else:
-                output, vy = output
-        else:
-            if carry_over_fast_weight:
-                output, new_mem = output
+        if carry_over_fast_weight:
+            output, new_mem = output
 
         output = self.pos_ff(output)
-        
-        if self.attn_type in [102,]:
-            if carry_over_fast_weight:
-                return output, vy, gradvaly, new_mem
-            return output, vy, gradvaly
-        elif self.attn_type in [103,]:
-            if carry_over_fast_weight:
-                return output, vy, new_mem
-            return output, vy
-        else:
-            if carry_over_fast_weight:
-                return output, new_mem
-            return output
+        if carry_over_fast_weight:
+            return output, new_mem
+        return output
 
 
 class RelLearnableDecoderLayer(nn.Module):
@@ -1698,15 +1783,10 @@ class MemTransformerLM(nn.Module):
                  skip_attn_normalization=False,
                  no_pos=False,  # no positional encoding
                  device='cuda',
-                 mu=0.0,
-                 stepsize=1.0,
-                 res_mu=0.0,
-                 res_stepsize=1.0,
-                 res_delta=0.0001, 
-                 adaptive_type="nc",
-                 diag_size=0,
-                 sparse_ratio=0.5,
-                 kernels=['elu',]):
+                 update_mode='hard',
+                 kernel_size=[1,1], 
+                 stride=[1,1],
+                 n_global_head=2):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
         self.no_pos = no_pos
@@ -1730,16 +1810,6 @@ class MemTransformerLM(nn.Module):
         self.max_klen = tgt_len + ext_len + mem_len
 
         self.attn_type = attn_type
-        
-        self.mu = mu
-        self.stepsize = stepsize
-        self.res_mu = res_mu
-        self.res_stepsize = res_stepsize
-        self.res_delta = res_delta
-        self.adaptive_type = adaptive_type
-        self.diag_size = diag_size
-        self.sparse_ratio = sparse_ratio
-        self.kernels = kernels
 
         self.layers = nn.ModuleList()
         if attn_type == 0:  # the default attention
@@ -1758,7 +1828,7 @@ class MemTransformerLM(nn.Module):
                         tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
                         dropatt=dropatt, pre_lnorm=pre_lnorm)
                 )
-        elif attn_type in [2, 3, 4]:  # absolute embeddings
+        elif attn_type in [2, 3, 4, 203]:  # absolute embeddings
             # 2: baseline vanilla transformer
             # 3:
             # 4: linear transformer
@@ -1769,18 +1839,34 @@ class MemTransformerLM(nn.Module):
                         dropatt=dropatt, pre_lnorm=pre_lnorm,
                         attn_type=attn_type)
                 )
-        elif attn_type in [201, 202]:  # absolute embeddings
-            # 2: baseline vanilla transformer
-            # 3:
-            # 4: linear transformer
+        
+        elif attn_type in [200, 201, 202]:  # absolute embeddings
             for i in range(n_layer):
                 self.layers.append(
                     DecoderLayer(
                         n_head, d_model, d_head, d_inner, dropout,
                         dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        attn_type=attn_type, diag_size=diag_size, sparse_ratio=sparse_ratio, kernels=kernels, layer_id=i, num_layer=n_layer,
-                        skip_attn_normalization=skip_attn_normalization, proj_dim=proj_dim, device=device, n_roll=n_roll)
+                        attn_type=attn_type, update_mode=update_mode)
                 )
+                
+        elif attn_type in [204,]:  # absolute embeddings
+            for i in range(n_layer):
+                self.layers.append(
+                    DecoderLayer(
+                        n_head, d_model, d_head, d_inner, dropout, kernel_size=kernel_size, stride=stride, 
+                        dropatt=dropatt, pre_lnorm=pre_lnorm,
+                        attn_type=attn_type)
+                )
+        
+        elif attn_type in [205,]:  # absolute embeddings
+            for i in range(n_layer):
+                self.layers.append(
+                    DecoderLayer(
+                        n_head, d_model, d_head, d_inner, dropout, n_global_head=n_global_head, 
+                        dropatt=dropatt, pre_lnorm=pre_lnorm,
+                        attn_type=attn_type)
+                )
+        
         elif attn_type in [6, 7]:  # absolute embeddings
             # 6: mirrored attention
             # 7: mirrored attention v2
@@ -1801,39 +1887,6 @@ class MemTransformerLM(nn.Module):
                         dropatt=dropatt, pre_lnorm=pre_lnorm,
                         attn_type=attn_type, layer_id=i, num_layer=n_layer,
                         skip_attn_normalization=skip_attn_normalization)
-                )
-        elif attn_type in [101,]:  # fast weights
-            # 10: debugging, same as linear trafo but step by step
-            # 14: linear fast weight
-            for i in range(n_layer):
-                self.layers.append(
-                    DecoderLayer(
-                        n_head, d_model, d_head, d_inner, dropout,
-                        dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        attn_type=attn_type, layer_id=i, num_layer=n_layer,
-                        skip_attn_normalization=skip_attn_normalization, mu=self.mu, stepsize=self.stepsize)
-                )
-        elif attn_type in [102,]:  # fast weights
-            # 10: debugging, same as linear trafo but step by step
-            # 14: linear fast weight
-            for i in range(n_layer):
-                self.layers.append(
-                    DecoderLayer(
-                        n_head, d_model, d_head, d_inner, dropout,
-                        dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        attn_type=attn_type, layer_id=i, num_layer=n_layer,
-                        skip_attn_normalization=skip_attn_normalization, mu=self.mu, stepsize=self.stepsize, res_stepsize=self.res_stepsize, res_delta=self.res_delta, adaptive_type=self.adaptive_type)
-                )
-        elif attn_type in [103,]:  # fast weights
-            # 10: debugging, same as linear trafo but step by step
-            # 14: linear fast weight
-            for i in range(n_layer):
-                self.layers.append(
-                    DecoderLayer(
-                        n_head, d_model, d_head, d_inner, dropout,
-                        dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        attn_type=attn_type, layer_id=i, num_layer=n_layer,
-                        skip_attn_normalization=skip_attn_normalization, mu=self.mu, stepsize=self.stepsize, res_mu=self.res_mu, res_stepsize=self.res_stepsize)
                 )
         elif attn_type in [16, 26, 46]:  # fast weights w/ absolute embeddings
             # 10: debugging, same as linear trafo but step by step
@@ -1912,7 +1965,7 @@ class MemTransformerLM(nn.Module):
                                 10, 14, 16,
                                 24, 25, 26,
                                 34, 35,
-                                44, 45, 46, 101, 102, 103, 201, 202]:
+                                44, 45, 46, 200, 201, 202, 203, 204, 205]:
             # standard absolute pos
             self.pos_emb = PositionalEmbedding(self.d_model)
 
@@ -2023,7 +2076,7 @@ class MemTransformerLM(nn.Module):
                     dec_attn_mask=dec_attn_mask, mems=mems_i)
                 hids.append(core_out)
 
-        elif self.attn_type in [2, 4, 5, 6, 7, 10, 14, 16, 201, 202]:  # absolute
+        elif self.attn_type in [2, 4, 5, 6, 7, 10, 14, 16, 200, 201, 202, 203, 204, 205]:  # absolute
             if self.no_pos:
                 core_out = self.drop(word_emb)
             else:
@@ -2042,7 +2095,7 @@ class MemTransformerLM(nn.Module):
                 mems_i = None if mems is None else mems[i]
                 if mems_i is not None and i == 0:
                     mems_i += pos_emb[:mlen]
-                if self.attn_type == 5 or self.attn_type == 201 or self.attn_type == 202:
+                if self.attn_type == 5:
                     core_out = layer(core_out, dec_attn_mask=dec_attn_mask,
                                      mems=mems_i, redraw=self.training)
                 else:
@@ -2050,7 +2103,7 @@ class MemTransformerLM(nn.Module):
                                      mems=mems_i)
                 hids.append(core_out)
 
-        elif self.attn_type in [24, 25, 26, 34, 35, 44, 45, 46, 101, 102, 103]:  # absolute
+        elif self.attn_type in [24, 25, 26, 34, 35, 44, 45, 46]:  # absolute
             if self.no_pos:
                 core_out = self.drop(word_emb)
             else:
@@ -2068,51 +2121,23 @@ class MemTransformerLM(nn.Module):
             if carry_over_fast_weight:
                 new_mems = []
                 
-            if self.attn_type in [102,]:
-                v = torch.zeros_like(core_out)
-                gradval = torch.ones_like(core_out)
-                
-            if self.attn_type in [103,]:
-                v = torch.zeros_like(core_out)
-                
             for i, layer in enumerate(self.layers):
                 mems_i = None if mems is None else mems[i]
                 if self.attn_type in [25, 35, 45]:
                     out = layer(
                         core_out, dec_attn_mask=dec_attn_mask,
                         mems=mems_i, redraw=self.training,
-                        carry_over_fast_weight=carry_over_fast_weight)
-                elif self.attn_type in [102,]:
-                    out = layer(
-                        core_out, v, gradval, dec_attn_mask=dec_attn_mask, mems=mems_i,
-                        carry_over_fast_weight=carry_over_fast_weight)
-                elif self.attn_type in [103,]:
-                    out = layer(
-                        core_out, v, dec_attn_mask=dec_attn_mask, mems=mems_i,
-                        carry_over_fast_weight=carry_over_fast_weight)            
+                        carry_over_fast_weight=carry_over_fast_weight)       
                 else:
                     out = layer(
                         core_out, dec_attn_mask=dec_attn_mask, mems=mems_i,
                         carry_over_fast_weight=carry_over_fast_weight)
                 
-                if self.attn_type in [102,]:
-                    if carry_over_fast_weight:
-                        core_out, v, gradval, new_fast_weight = out
-                        new_mems.append(new_fast_weight)
-                    else:
-                        core_out, v, gradval = out
-                elif self.attn_type in [103,]:
-                    if carry_over_fast_weight:
-                        core_out, v, new_fast_weight = out
-                        new_mems.append(new_fast_weight)
-                    else:
-                        core_out, v = out
+                if carry_over_fast_weight:
+                    core_out, new_fast_weight = out
+                    new_mems.append(new_fast_weight)
                 else:
-                    if carry_over_fast_weight:
-                        core_out, new_fast_weight = out
-                        new_mems.append(new_fast_weight)
-                    else:
-                        core_out = out
+                    core_out = out
                 hids.append(core_out)
 
         elif self.attn_type == 3:
@@ -2174,6 +2199,48 @@ class MemTransformerLM(nn.Module):
             return [loss]
         else:
             return [loss] + new_mems
+        
+    def get_pi(self):
+        pi_list = []
+        if self.attn_type == 200:
+            for pi_indx in range(len(self.layers)):
+                pi_list.append(self.layers[pi_indx].dec_attn.pi)
+        return pi_list
+    
+    def get_pi0(self):
+        pi_list = []
+        if self.attn_type == 200:
+            for pi_indx in range(len(self.layers)):
+                pi_list.append(self.layers[pi_indx].dec_attn.pi0)
+        return pi_list
+    
+    def get_pi1(self):
+        pi_list = []
+        if self.attn_type == 200:
+            for pi_indx in range(len(self.layers)):
+                pi_list.append(self.layers[pi_indx].dec_attn.pi1)
+        return pi_list
+    
+    def get_pi0_data(self):
+        pi_list = []
+        if self.attn_type == 200:
+            for pi_indx in range(len(self.layers)):
+                pi_list.append(self.layers[pi_indx].dec_attn.pi0.data)
+        return pi_list
+    
+    def get_pi1_data(self):
+        pi_list = []
+        if self.attn_type == 200:
+            for pi_indx in range(len(self.layers)):
+                pi_list.append(self.layers[pi_indx].dec_attn.pi1.data)
+        return pi_list
+    
+    def get_mu_diff(self):
+        md_list = []
+        if self.attn_type == 200:
+            for md_indx in range(len(self.layers)):
+                md_list.append(-torch.sum((self.layers[md_indx].dec_attn.mu[0] - self.layers[md_indx].dec_attn.mu[1])**2))
+        return md_list
 
 
 if __name__ == '__main__':
@@ -2192,54 +2259,6 @@ if __name__ == '__main__':
     parser.add_argument('--cuda', action='store_true', help='')
     parser.add_argument('--seed', type=int, default=1111, help='')
     parser.add_argument('--multi_gpu', action='store_true', help='')
-    parser.add_argument(
-        "--mu",
-        type=float,
-        default=0.0,
-        help="Momentum to be used for momentum transformer layers"
-    )
-    parser.add_argument(
-        "--stepsize",
-        type=float,
-        default=1.0,
-        help="Stepsize to be used for momentum transformer layers"
-    )
-    parser.add_argument(
-        "--res_mu",
-        type=float,
-        default=0.0,
-        help="Momentum to be used for momentum residual connections"
-    )
-    parser.add_argument(
-            "--res_stepsize",
-            type=float,
-            default=1.0,
-            help="Stepsize to be used for momentum residual connections"
-        )
-    parser.add_argument(
-            "--res_delta",
-            type=float,
-            default=0.0001,
-            help="Delta to be used for momentum residual connections"
-        )
-    parser.add_argument(
-            "--adaptive_type",
-            type=str,
-            choices=["nc", "fr", "pr", "hs", "dy"],
-            default="nc",
-            help="Adaptive momentum type to be used for momentum residual connections"
-        )
-    parser.add_argument('--diag_size', type=int, default=0,
-                        help='diag size for sparse transformer')
-    parser.add_argument(
-            "--sparse_ratio",
-            type=float,
-            default=0.5,
-            help="ratio between sparse and lowrank"
-        )
-    parser.add_argument('--kernels', type=str, nargs='+', default=['elu',],
-                        help='kernels to use for lowrank.')
-
 
     args = parser.parse_args()
 
@@ -2267,8 +2286,7 @@ if __name__ == '__main__':
                 tie_weight=True, d_embed=d_embed, div_val=div_val,
                 tie_projs=tie_projs, pre_lnorm=True, tgt_len=tgt_len,
                 ext_len=ext_len, mem_len=mem_len, cutoffs=cutoffs,
-                attn_type=0, mu=args.mu, stepsize=args.stepsize, res_mu=args.res_mu, res_stepsize=args.res_stepsize, 
-                res_delta=args.res_delta, adaptive_type=args.adaptive_type, diag_size=args.diag_size, sparse_ratio=args.sparse_ratio, kernels=args.kernels).to(device)
+                attn_type=0, update_mode='hard').to(device)
 
             print(sum(p.numel() for p in model.parameters()))
 

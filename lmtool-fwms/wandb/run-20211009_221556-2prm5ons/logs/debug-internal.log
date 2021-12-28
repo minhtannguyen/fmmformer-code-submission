@@ -1,0 +1,80 @@
+2021-10-09 22:15:57,779 INFO    MainThread:21488 [internal.py:wandb_internal():91] W&B internal server running at pid: 21488, started at: 2021-10-09 22:15:57.778805
+2021-10-09 22:15:57,783 INFO    WriterThread:21488 [datastore.py:open_for_write():77] open: /root/repos/mgattn/lmtool-fwms/wandb/run-20211009_221556-2prm5ons/run-2prm5ons.wandb
+2021-10-09 22:15:57,785 DEBUG   HandlerThread:21488 [handler.py:handle_request():120] handle_request: check_version
+2021-10-09 22:15:57,788 DEBUG   SenderThread:21488 [sender.py:send():160] send: header
+2021-10-09 22:15:57,788 DEBUG   SenderThread:21488 [sender.py:send():160] send: request
+2021-10-09 22:15:57,788 DEBUG   SenderThread:21488 [sender.py:send_request():169] send_request: check_version
+2021-10-09 22:15:57,910 DEBUG   SenderThread:21488 [sender.py:send():160] send: run
+2021-10-09 22:15:58,107 DEBUG   HandlerThread:21488 [handler.py:handle_request():120] handle_request: run_start
+2021-10-09 22:15:58,109 INFO    SenderThread:21488 [sender.py:_start_run_threads():654] run started: 2prm5ons with start time 1633817756
+2021-10-09 22:15:58,109 DEBUG   SenderThread:21488 [sender.py:send():160] send: summary
+2021-10-09 22:15:58,110 INFO    SenderThread:21488 [sender.py:_save_file():781] saving file wandb-summary.json with policy end
+2021-10-09 22:16:05,754 DEBUG   HandlerThread:21488 [meta.py:__init__():39] meta init
+2021-10-09 22:16:05,754 DEBUG   HandlerThread:21488 [meta.py:__init__():53] meta init done
+2021-10-09 22:16:05,754 DEBUG   HandlerThread:21488 [meta.py:probe():210] probe
+2021-10-09 22:16:05,761 DEBUG   HandlerThread:21488 [meta.py:_setup_git():200] setup git
+2021-10-09 22:16:05,796 DEBUG   HandlerThread:21488 [meta.py:_setup_git():207] setup git done
+2021-10-09 22:16:05,796 DEBUG   HandlerThread:21488 [meta.py:_save_pip():57] save pip
+2021-10-09 22:16:05,797 DEBUG   HandlerThread:21488 [meta.py:_save_pip():71] save pip done
+2021-10-09 22:16:05,797 DEBUG   HandlerThread:21488 [meta.py:_save_conda():78] save conda
+2021-10-09 22:16:06,723 DEBUG   HandlerThread:21488 [meta.py:_save_conda():86] save conda done
+2021-10-09 22:16:06,723 DEBUG   HandlerThread:21488 [meta.py:probe():252] probe done
+2021-10-09 22:16:06,729 DEBUG   HandlerThread:21488 [handler.py:handle_request():120] handle_request: status
+2021-10-09 22:16:06,730 DEBUG   SenderThread:21488 [sender.py:send():160] send: request
+2021-10-09 22:16:06,735 DEBUG   SenderThread:21488 [sender.py:send_request():169] send_request: status
+2021-10-09 22:16:06,893 DEBUG   SenderThread:21488 [sender.py:send():160] send: run
+2021-10-09 22:16:07,103 INFO    SenderThread:21488 [sender.py:send_run():555] updated run: 2prm5ons
+2021-10-09 22:16:07,106 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:07,270 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:07,438 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:07,606 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:07,777 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:07,947 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:08,116 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:08,293 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:08,471 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:08,639 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:08,812 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:09,705 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:09,880 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:10,060 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:10,229 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:10,408 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:10,588 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:10,759 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:10,934 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:11,111 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:11,283 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:11,535 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:11,715 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:11,884 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:12,053 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:12,231 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:12,414 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:12,592 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:12,928 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:13,140 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:13,318 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:13,489 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:13,662 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:13,910 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:14,090 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:14,266 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:14,443 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:14,623 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:14,690 DEBUG   HandlerThread:21488 [handler.py:handle_request():120] handle_request: poll_exit
+2021-10-09 22:16:14,807 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:14,990 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:15,175 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:15,362 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:15,542 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:15,733 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:15,911 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:16,093 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:16,113 WARNING MainThread:21488 [internal.py:wandb_internal():146] Internal process interrupt: 1
+2021-10-09 22:16:16,277 DEBUG   SenderThread:21488 [sender.py:send():160] send: config
+2021-10-09 22:16:16,352 WARNING MainThread:21488 [internal.py:wandb_internal():146] Internal process interrupt: 2
+2021-10-09 22:16:16,352 ERROR   MainThread:21488 [internal.py:wandb_internal():149] Internal process interrupted.
+2021-10-09 22:16:16,458 INFO    SenderThread:21488 [sender.py:finish():884] shutting down sender
+2021-10-09 22:16:16,691 INFO    WriterThread:21488 [datastore.py:close():258] close: /root/repos/mgattn/lmtool-fwms/wandb/run-20211009_221556-2prm5ons/run-2prm5ons.wandb
+2021-10-09 22:16:16,762 INFO    MainThread:21488 [internal.py:handle_exit():78] Internal process exited

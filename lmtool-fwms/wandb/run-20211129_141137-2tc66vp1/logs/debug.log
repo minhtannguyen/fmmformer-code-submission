@@ -1,0 +1,223 @@
+2021-11-29 14:11:37,835 INFO    MainThread:33548 [wandb_setup.py:_flush():69] setting env: {}
+2021-11-29 14:11:37,835 INFO    MainThread:33548 [wandb_setup.py:_flush():69] setting login settings: {}
+2021-11-29 14:11:37,836 INFO    MainThread:33548 [wandb_init.py:_log_setup():336] Logging user logs to /root/repos/mgattn/lmtool-fwms/wandb/run-20211129_141137-2tc66vp1/logs/debug.log
+2021-11-29 14:11:37,836 INFO    MainThread:33548 [wandb_init.py:_log_setup():337] Logging internal logs to /root/repos/mgattn/lmtool-fwms/wandb/run-20211129_141137-2tc66vp1/logs/debug-internal.log
+2021-11-29 14:11:37,836 INFO    MainThread:33548 [wandb_init.py:init():369] calling init triggers
+2021-11-29 14:11:37,836 INFO    MainThread:33548 [wandb_init.py:init():376] wandb.init called with sweep_config: {}
+config: {}
+2021-11-29 14:11:37,836 INFO    MainThread:33548 [wandb_init.py:init():418] starting backend
+2021-11-29 14:11:37,837 INFO    MainThread:33548 [backend.py:_multiprocessing_setup():71] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2021-11-29 14:11:37,849 INFO    MainThread:33548 [backend.py:ensure_launched():123] starting backend process...
+2021-11-29 14:11:37,856 INFO    MainThread:33548 [backend.py:ensure_launched():128] started backend process with pid: 41216
+2021-11-29 14:11:37,857 INFO    MainThread:33548 [wandb_init.py:init():423] backend started and connected
+2021-11-29 14:11:37,858 INFO    MainThread:33548 [wandb_init.py:init():465] updated telemetry
+2021-11-29 14:11:37,859 INFO    MainThread:33548 [wandb_init.py:init():484] communicating current version
+2021-11-29 14:11:38,781 INFO    MainThread:33548 [wandb_init.py:init():489] got version response upgrade_message: "wandb version 0.12.7 is available!  To upgrade, please run:\n $ pip install wandb --upgrade"
+
+2021-11-29 14:11:38,782 INFO    MainThread:33548 [wandb_init.py:init():497] communicating run to backend with 30 second timeout
+2021-11-29 14:11:39,021 INFO    MainThread:33548 [wandb_init.py:init():522] starting run threads in backend
+2021-11-29 14:11:43,707 INFO    MainThread:33548 [wandb_run.py:_console_start():1524] atexit reg
+2021-11-29 14:11:43,708 INFO    MainThread:33548 [wandb_run.py:_redirect():1371] redirect: SettingsConsole.REDIRECT
+2021-11-29 14:11:43,711 INFO    MainThread:33548 [wandb_run.py:_redirect():1376] Redirecting console.
+2021-11-29 14:11:43,716 INFO    MainThread:33548 [wandb_run.py:_redirect():1438] Redirects installed.
+2021-11-29 14:11:43,716 INFO    MainThread:33548 [wandb_init.py:init():546] run started, returning control to user process
+2021-11-29 14:11:43,717 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set host = insideDocker - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,717 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb host insideDocker None
+2021-11-29 14:11:43,717 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set data = /tanData/nlp_data/wikitext-103/ - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,717 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb data /tanData/nlp_data/wikitext-103/ None
+2021-11-29 14:11:43,717 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set dataset = wt103 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,717 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb dataset wt103 None
+2021-11-29 14:11:43,718 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set n_layer = 16 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,718 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb n_layer 16 None
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set n_head = 8 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb n_head 8 None
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set d_head = 16 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb d_head 16 None
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set d_embed = -1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb d_embed -1 None
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set d_model = 128 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb d_model 128 None
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set d_inner = 2048 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,719 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb d_inner 2048 None
+2021-11-29 14:11:43,720 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set dropout = 0.1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,720 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb dropout 0.1 None
+2021-11-29 14:11:43,720 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set dropatt = 0.0 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,720 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb dropatt 0.0 None
+2021-11-29 14:11:43,720 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set init = normal - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb init normal None
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set emb_init = normal - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb emb_init normal None
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set init_range = 0.1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb init_range 0.1 None
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set emb_init_range = 0.01 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb emb_init_range 0.01 None
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set init_std = 0.02 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb init_std 0.02 None
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set proj_init_std = 0.01 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,721 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb proj_init_std 0.01 None
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set optim = adam - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb optim adam None
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set lr = 0.00025 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb lr 0.00025 None
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set mom = 0.0 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb mom 0.0 None
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set scheduler = cosine - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb scheduler cosine None
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set warmup_step = 2000 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,722 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb warmup_step 2000 None
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set decay_rate = 0.5 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb decay_rate 0.5 None
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set lr_min = 0.0 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb lr_min 0.0 None
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set clip = 0.25 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb clip 0.25 None
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set clip_nonemb = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,723 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb clip_nonemb False None
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set max_step = 500000 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb max_step 500000 None
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set batch_size = 96 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb batch_size 96 None
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set eval_batch_size = 10 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb eval_batch_size 10 None
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set batch_chunk = 1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb batch_chunk 1 None
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set tgt_len = 256 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,724 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb tgt_len 256 None
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set eval_tgt_len = 256 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb eval_tgt_len 256 None
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set ext_len = 0 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb ext_len 0 None
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set mem_len = 0 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb mem_len 0 None
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set not_tied = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb not_tied False None
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set seed = 1111 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb seed 1111 None
+2021-11-29 14:11:43,725 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set cuda = True - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb cuda True None
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set adaptive = True - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb adaptive True None
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set div_val = 1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb div_val 1 None
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set pre_lnorm = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb pre_lnorm False None
+2021-11-29 14:11:43,726 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set varlen = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,728 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb varlen False None
+2021-11-29 14:11:43,728 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set multi_gpu = True - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,728 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb multi_gpu True None
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set log_interval = 200 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb log_interval 200 None
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set eval_interval = 4000 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb eval_interval 4000 None
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set work_dir = /tanData/mgattn/fourier - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb work_dir /tanData/mgattn/fourier None
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set restart = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,729 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb restart False None
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set restart_dir =  - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb restart_dir  None
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set debug = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb debug False None
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set same_length = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb same_length False None
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set attn_type = 203 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb attn_type 203 None
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set clamp_len = -1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb clamp_len -1 None
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set eta_min = 0.0 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,730 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb eta_min 0.0 None
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set gpu0_bsz = -1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb gpu0_bsz -1 None
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set max_eval_steps = -1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb max_eval_steps -1 None
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set sample_softmax = -1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb sample_softmax -1 None
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set patience = 0 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb patience 0 None
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set finetune_v2 = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,731 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb finetune_v2 False None
+2021-11-29 14:11:43,732 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set finetune_v3 = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,732 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb finetune_v3 False None
+2021-11-29 14:11:43,732 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set performer_proj_dim = 16 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,732 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb performer_proj_dim 16 None
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set dpfp_n_roll = 2 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb dpfp_n_roll 2 None
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set carry_over_fast_weight = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb carry_over_fast_weight False None
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set skip_attn_normalization = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb skip_attn_normalization False None
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set no_pos = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,733 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb no_pos False None
+2021-11-29 14:11:43,734 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set fp16 = False - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,734 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb fp16 False None
+2021-11-29 14:11:43,734 INFO    MainThread:33548 [wandb_config.py:__setitem__():141] config set static_loss_scale = 1 - <bound method Run._config_callback of <wandb.sdk.wandb_run.Run object at 0x7fdd84f2ea20>>
+2021-11-29 14:11:43,734 INFO    MainThread:33548 [wandb_run.py:_config_callback():749] config_cb static_loss_scale 1 None
+2021-11-29 14:11:53,730 INFO    MainThread:33548 [wandb_run.py:_atexit_cleanup():1494] got exitcode: 1
+2021-11-29 14:11:53,738 INFO    MainThread:33548 [wandb_run.py:_restore():1466] restore
+2021-11-29 14:11:57,497 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: file_counts {
+  wandb_count: 1
+}
+pusher_stats {
+  uploaded_bytes: 1685
+  total_bytes: 1685
+}
+
+2021-11-29 14:11:58,067 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: file_counts {
+  wandb_count: 5
+}
+pusher_stats {
+  uploaded_bytes: 1685
+  total_bytes: 9718
+}
+
+2021-11-29 14:11:58,325 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: file_counts {
+  wandb_count: 5
+}
+pusher_stats {
+  uploaded_bytes: 1685
+  total_bytes: 9718
+}
+
+2021-11-29 14:11:58,428 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: file_counts {
+  wandb_count: 5
+}
+pusher_stats {
+  uploaded_bytes: 9718
+  total_bytes: 9718
+}
+
+2021-11-29 14:11:58,531 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: file_counts {
+  wandb_count: 5
+}
+pusher_stats {
+  uploaded_bytes: 9718
+  total_bytes: 9718
+}
+
+2021-11-29 14:11:58,634 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: file_counts {
+  wandb_count: 5
+}
+pusher_stats {
+  uploaded_bytes: 9718
+  total_bytes: 9718
+}
+
+2021-11-29 14:11:58,737 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: file_counts {
+  wandb_count: 5
+}
+pusher_stats {
+  uploaded_bytes: 9718
+  total_bytes: 9718
+}
+
+2021-11-29 14:11:58,840 INFO    MainThread:33548 [wandb_run.py:_wait_for_finish():1616] got exit ret: done: true
+exit_result {
+}
+file_counts {
+  wandb_count: 5
+}
+pusher_stats {
+  uploaded_bytes: 9718
+  total_bytes: 9718
+}
+
+2021-11-29 14:12:00,260 INFO    MainThread:33548 [wandb_run.py:_show_files():1838] logging synced files

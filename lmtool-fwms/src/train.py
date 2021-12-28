@@ -164,58 +164,19 @@ parser.add_argument('--job_name', type=str, default=None,
                     help='job name for wandb.')
 parser.add_argument('--use_wandb', action='store_true',
                     help='use wandb.')
+parser.add_argument('--update_mode', type=str, default='hard',
+                    help='hard, soft, rbf')
+parser.add_argument('--pi_reg', type=float, default=0.0,
+                    help='weight of the pi norm regularizer')
+parser.add_argument('--md_reg', type=float, default=0.0,
+                    help='weight of distance between 2 keys regularizer')
+parser.add_argument('--kernel_size', type=int, nargs='+', default=[1, 1],
+                        help='kernel size of block matrices in PatchAttn.')
+parser.add_argument('--stride', type=int, nargs='+', default=[1, 1],
+                        help='stride of block matrices in PatchAttn.')
 
-parser.add_argument(
-        "--mu",
-        type=float,
-        default=0.0,
-        help="Momentum to be used for momentum transformer layers"
-    )
-parser.add_argument(
-        "--stepsize",
-        type=float,
-        default=1.0,
-        help="Stepsize to be used for momentum transformer layers"
-    )
-
-parser.add_argument(
-        "--res_mu",
-        type=float,
-        default=0.0,
-        help="Momentum to be used for momentum residual connections"
-    )
-
-parser.add_argument(
-        "--res_stepsize",
-        type=float,
-        default=1.0,
-        help="Stepsize to be used for momentum residual connections"
-    )
-
-parser.add_argument(
-        "--res_delta",
-        type=float,
-        default=0.0001,
-        help="Delta to be used for momentum residual connections"
-    )
-
-parser.add_argument(
-        "--adaptive_type",
-        type=str,
-        choices=["nc", "fr", "pr", "hs", "dy"],
-        default="nc",
-        help="Adaptive momentum type to be used for momentum residual connections"
-    )
-parser.add_argument('--diag_size', type=int, default=0,
-                    help='diag size for sparse transformer')
-parser.add_argument(
-            "--sparse_ratio",
-            type=float,
-            default=0.5,
-            help="ratio between sparse and lowrank"
-        )
-parser.add_argument('--kernels', type=str, nargs='+', default=['elu',],
-                        help='kernels to use for lowrank.')
+parser.add_argument('--n_global_head', type=int, default=2,
+                    help='number of global head in HDP transformer.')
 
 args = parser.parse_args()
 
@@ -358,9 +319,10 @@ if args.fp16:
 
 device = torch.device('cuda' if args.cuda else 'cpu')
 
-###############################################################################
-# Load data
-###############################################################################
+"""
+Load data
+##############################################################################
+"""
 corpus = get_lm_corpus(args.data, args.dataset)
 ntokens = len(corpus.vocab)
 args.n_token = ntokens
@@ -391,7 +353,7 @@ if args.adaptive:
 
 ###############################################################################
 # Build the model
-###############################################################################
+# ##############################################################################
 def init_weight(weight):
     if args.init == 'uniform':
         nn.init.uniform_(weight, -args.init_range, args.init_range)
@@ -498,15 +460,10 @@ else:
         skip_attn_normalization=args.skip_attn_normalization,
         no_pos=args.no_pos,
         device=device,
-        mu=args.mu,
-        stepsize=args.stepsize,
-        res_mu=args.res_mu,
-        res_stepsize=args.res_stepsize, 
-        res_delta=args.res_delta, 
-        adaptive_type=args.adaptive_type,
-        diag_size=args.diag_size,
-        sparse_ratio=args.sparse_ratio,
-        kernels=args.kernels
+        update_mode=args.update_mode,
+        kernel_size=args.kernel_size, 
+        stride=args.stride,
+        n_global_head=args.n_global_head
     )
 
     model.apply(weights_init)
@@ -626,7 +583,7 @@ logging('#non emb params = {}'.format(args.n_nonemb_param))
 
 ###############################################################################
 # Training code
-###############################################################################
+# ##############################################################################
 
 def evaluate(eval_iter):
     # Turn on evaluation mode which disables dropout.
@@ -670,7 +627,7 @@ def train():
     global log_start_time
 
     model.train()  # Turn on training mode which enables dropout.
-
+    
     if args.batch_chunk > 1:
         mems = [tuple() for _ in range(args.batch_chunk)]
     else:
@@ -693,6 +650,7 @@ def train():
                     carry_over_fast_weight=args.carry_over_fast_weight)
                 loss, mems[i] = ret[0], ret[1:]
                 loss = loss.float().mean().type_as(loss) / args.batch_chunk
+                
                 if args.fp16:
                     optimizer.backward(loss)
                 else:
@@ -704,6 +662,7 @@ def train():
                 carry_over_fast_weight=args.carry_over_fast_weight)
             loss, mems = ret[0], ret[1:]
             loss = loss.float().mean().type_as(loss)
+            
             if args.fp16:
                 optimizer.backward(loss)
             else:
@@ -718,6 +677,12 @@ def train():
         optimizer.step()
         if args.sample_softmax > 0:
             optimizer_sparse.step()
+        
+#         if args.attn_type in [200,] and args.update_mode == 'soft':
+#             pi_list = para_model.module.get_pi()
+#             for pi_indx in range(len(pi_list)):
+#                 print(pi_list)
+#                 # print("pi0_layer_%i = %f"%(pi_indx, pi_list[pi_indx]))
 
         # step-wise learning rate annealing
         train_step += 1
@@ -737,6 +702,28 @@ def train():
             scheduler.step(train_step)
 
         if train_step % args.log_interval == 0:
+#             if use_wandb:
+#                 if args.attn_type in [200,] and args.update_mode == 'soft':
+#                     pi_val = model.get_pi()
+#                     pi_val = torch.stack(pi_val)
+#                     wandb.log({"mean_pi": pi_val.mean()})
+#                     wandb.log({"std_pi": pi_val.std()})
+#                     wandb.log({"max_pi": pi_val.max()})
+#                     wandb.log({"min_pi": pi_val.min()})
+#                 if args.attn_type in [200,] and args.update_mode == 'rbf':
+#                     pi0_val = model.get_pi0_data()
+#                     pi0_val = torch.stack(pi0_val)
+#                     pi1_val = model.get_pi1_data()
+#                     pi1_val = torch.stack(pi1_val)
+#                     wandb.log({"mean_pi0": pi0_val.mean()})
+#                     wandb.log({"std_pi0": pi0_val.std()})
+#                     wandb.log({"max_pi0": pi0_val.max()})
+#                     wandb.log({"min_pi0": pi0_val.min()})
+#                     wandb.log({"mean_pi1": pi1_val.mean()})
+#                     wandb.log({"std_pi1": pi1_val.std()})
+#                     wandb.log({"max_pi1": pi1_val.max()})
+#                     wandb.log({"min_pi1": pi1_val.min()})
+                        
             cur_loss = train_loss / args.log_interval
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches |' \
@@ -767,24 +754,10 @@ def train():
                 log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
                 if use_wandb:
                     wandb.log({"valid_bpc": val_loss / math.log(2)})
-#                     for i in range(len(model.layers)):
-#                         if hasattr(model.layers[i].dec_attn, 'sparse_ratio'):
-#                             if isinstance(model.layers[i].dec_attn.sparse_ratio, nn.Parameter):
-#                                 wandb.log({'sparse_ratio layer {:3d}'.format(i): model.layers[i].dec_attn.sparse_ratio.data.cpu()})
-#                         if hasattr(model.layers[i].dec_attn, 'sparse_ratio2'):
-#                             if isinstance(model.layers[i].dec_attn.sparse_ratio2, nn.Parameter):
-#                                 wandb.log({'sparse_ratio2 layer {:3d}'.format(i): model.layers[i].dec_attn.sparse_ratio2.data.cpu()})
             else:
                 log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
                 if use_wandb:
                     wandb.log({"valid_ppl": math.exp(val_loss)})
-#                     for i in range(len(model.layers)):
-#                         if hasattr(model.layers[i].dec_attn, 'sparse_ratio'):
-#                             if isinstance(model.layers[i].dec_attn.sparse_ratio, nn.Parameter):
-#                                 wandb.log({'sparse_ratio layer {:3d}'.format(i): model.layers[i].dec_attn.sparse_ratio.data.cpu()})
-#                         if hasattr(model.layers[i].dec_attn, 'sparse_ratio2'):
-#                             if isinstance(model.layers[i].dec_attn.sparse_ratio2, nn.Parameter):
-#                                 wandb.log({'sparse_ratio2 layer {:3d}'.format(i): model.layers[i].dec_attn.sparse_ratio2.data.cpu()})
 
 
             logging(log_str)
